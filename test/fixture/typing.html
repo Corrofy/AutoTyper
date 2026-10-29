@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Auto Typer — typing fixture</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        padding: 28px clamp(16px, 6vw, 72px) 72px;
+        background: #21222c;
+        color: #f8f8f2;
+        font: 14px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.lead { color: #8a92c0; margin: 0 0 22px; font-size: 13px; }
+      h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #bd93f9; margin: 26px 0 8px; }
+      .card { background: #282a36; border: 1px solid #44475a; border-radius: 10px; padding: 12px; }
+      textarea, input {
+        width: 100%; box-sizing: border-box;
+        background: #21222c; color: #f8f8f2;
+        border: 1px solid #44475a; border-radius: 6px;
+        padding: 10px;
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        outline: none;
+      }
+      textarea:focus, input:focus { border-color: #bd93f9; box-shadow: 0 0 0 2px rgba(189,147,249,.22); }
+      textarea { min-height: 120px; resize: vertical; }
+      .mirror {
+        margin-top: 8px;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #8be9fd;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .note { font-size: 12px; color: #f1fa8c; }
+      .muted { color: #8a92c0; font-size: 12px; }
+      #status { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #50fa7b; }
+    </style>
+  </head>
+  <body>
+    <h1>Auto Typer — typing fixture</h1>
+    <p class="lead">
+      M2 acceptance page. The probe seeds settings through the dev-only bridge, focuses one field at a
+      time, and asserts what the page actually received.
+    </p>
+
+    <p class="note">
+      Load with <code>?probe=1</code> (tools/e2e.mjs does). Without it this page is inert and can be
+      typed into by hand.
+    </p>
+
+    <h2>1 · Plain textarea</h2>
+    <div class="card">
+      <textarea id="plain" aria-label="plain-textarea" spellcheck="false" placeholder="Plain textarea"></textarea>
+    </div>
+
+    <h2>2 · React-style controlled textarea</h2>
+    <div class="card">
+      <textarea id="controlled" aria-label="controlled-textarea" spellcheck="false" placeholder="Controlled value + onChange"></textarea>
+      <div id="mirror" class="mirror">onChange fired 0 times</div>
+      <p class="muted">
+        This stand-in reproduces React's value tracker: it installs its own <code>value</code>
+        accessor, so a naive <code>el.value = …</code> is invisible to it. The adapter must write
+        through the prototype setter (or the editing pipeline) for the counter to move.
+      </p>
+    </div>
+
+    <h2>3 · Single-line input</h2>
+    <div class="card">
+      <label class="muted" for="single">Newlines have nowhere to go here</label>
+      <input id="single" type="text" aria-label="single-line-input" placeholder="Single line" />
+    </div>
+
+    <h2>4 · Probe status</h2>
+    <div class="card">
+      <div id="status">waiting for extension…</div>
+    </div>
+
+    <script>
+      // ---- React-like controlled input -------------------------------------
+      //
+      // React's tracker works by shadowing the node's `value` property with an
+      // own accessor. A direct assignment updates the tracker, so React thinks
+      // nothing changed. The extension must bypass it; the counter below is the
+      // only evidence that it did.
+      (function setupControlled() {
+        const el = document.getElementById("controlled");
+        const mirror = document.getElementById("mirror");
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+        let tracked = descriptor.get.call(el);
+        let count = 0;
+
+        Object.defineProperty(el, "value", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return descriptor.get.call(this);
+          },
+          set(next) {
+            tracked = String(next);
+            descriptor.set.call(this, next);
+          },
+        });
+
+        el.addEventListener("input", () => {
+          const domValue = descriptor.get.call(el);
+          if (domValue === tracked) return;
+          tracked = domValue;
+          count += 1;
+          mirror.textContent = `onChange fired ${count} time${count === 1 ? "" : "s"} · ${JSON.stringify(domValue)}`;
+          window.__controlledChanges = count;
+        });
+
+        window.__controlledChanges = 0;
+      })();
+    </script>
+    <script src="typing-probe.js"></script>
+  </body>
+</html>

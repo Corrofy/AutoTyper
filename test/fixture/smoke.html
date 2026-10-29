@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Auto Typer — smoke fixture</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        padding: 28px clamp(16px, 6vw, 72px) 72px;
+        background: #21222c;
+        color: #f8f8f2;
+        font: 14px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.lead { color: #8a92c0; margin: 0 0 22px; font-size: 13px; }
+      h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #bd93f9; margin: 26px 0 8px; }
+      .card { background: #282a36; border: 1px solid #44475a; border-radius: 10px; padding: 12px; }
+      textarea, input, [contenteditable] {
+        width: 100%; box-sizing: border-box;
+        background: #21222c; color: #f8f8f2;
+        border: 1px solid #44475a; border-radius: 6px;
+        padding: 10px;
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        outline: none;
+      }
+      textarea:focus, input:focus, [contenteditable]:focus { border-color: #bd93f9; box-shadow: 0 0 0 2px rgba(189,147,249,.22); }
+      textarea { min-height: 140px; resize: vertical; }
+      [contenteditable] { min-height: 90px; }
+      .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      label { display: block; font-size: 12px; color: #8a92c0; margin-bottom: 4px; }
+      .note { font-size: 12px; color: #f1fa8c; }
+      code { color: #8be9fd; }
+    </style>
+  </head>
+  <body>
+    <h1>Auto Typer — smoke fixture</h1>
+    <p class="lead">
+      Plain fields only. Editor fixtures (React, Monaco, CodeMirror, Ace) arrive with M2–M4.
+    </p>
+
+    <p class="note">
+      M0 checklist: the floating widget appears bottom-left, drags and remembers its position,
+      and never steals focus from these fields when clicked.
+    </p>
+
+    <h2>1 · Textarea</h2>
+    <div class="card">
+      <textarea id="plain" data-probe-field spellcheck="false" placeholder="Click here, then click the overlay. Focus must stay in this textarea."></textarea>
+    </div>
+
+    <h2>2 · Single-line input</h2>
+    <div class="card">
+      <label for="search">Search-style input</label>
+      <input id="search" type="search" placeholder="Type here…" />
+    </div>
+
+    <h2>3 · Contenteditable</h2>
+    <div class="card">
+      <div id="editable" contenteditable="true" role="textbox" aria-label="Notes">
+        Editable region. Try typing here.
+      </div>
+    </div>
+
+    <h2>4 · Focus telemetry</h2>
+    <div class="card">
+      <div id="log" class="grid"></div>
+    </div>
+
+    <script>
+      // Local page telemetry: proves the widget is not stealing focus.
+      const log = document.getElementById("log");
+      const rows = new Map();
+      function note(key, value) {
+        rows.set(key, value);
+        log.innerHTML = [...rows]
+          .map(([k, v]) => `<div><label>${k}</label><code>${String(v).replace(/[<>&]/g, "")}</code></div>`)
+          .join("");
+      }
+      document.addEventListener("focusin", (event) => {
+        const el = event.target;
+        note("activeElement", el.id ? `#${el.id}` : el.tagName.toLowerCase());
+        note("isContentEditable", el.isContentEditable);
+      });
+      document.addEventListener("focusout", () => {
+        setTimeout(() => {
+          const el = document.activeElement;
+          note("after blur", el === document.body ? "(body)" : el.id ? `#${el.id}` : el.tagName.toLowerCase());
+        }, 0);
+      });
+      note("ready", "yes");
+    </script>
+    <script src="probe.js"></script>
+  </body>
+</html>

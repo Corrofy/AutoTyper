@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto Typer</title>
+    <link rel="stylesheet" href="../shared/theme.css" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <span class="name">Auto Typer</span>
+        <span class="version" id="version">v0.1.0</span>
+      </div>
+      <label class="switch" title="Enable or disable typing on all sites">
+        <input type="checkbox" id="enabled" aria-label="Enable Auto Typer" />
+        <span class="track"></span>
+      </label>
+    </header>
+
+    <main>
+      <section>
+        <div class="snippet-head">
+          <h2>Snippet</h2>
+          <div class="snippet-tools">
+            <button type="button" class="mini ghost" id="importBtn">Import…</button>
+            <button type="button" class="mini ghost" id="clearBtn">Clear</button>
+          </div>
+        </div>
+        <textarea
+          id="snippetText"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="Paste the code to be typed…"
+          aria-label="Snippet to type"
+        ></textarea>
+        <div class="snippet-meta">
+          <span id="charCount">0 chars</span>
+          <span class="file" id="fileName" title="">no file</span>
+        </div>
+        <input
+          type="file"
+          id="fileInput"
+          hidden
+          accept=".txt,.js,.mjs,.cjs,.jsx,.ts,.tsx,.py,.java,.kt,.c,.h,.cpp,.hpp,.cs,.go,.rs,.rb,.php,.swift,.sql,.sh,.html,.css,.json,.md,.yml,.yaml"
+        />
+      </section>
+
+      <section>
+        <div class="speed-head">
+          <h2>Speed</h2>
+          <span class="badge" id="wpmBadge">40 WPM</span>
+        </div>
+        <input type="range" id="wpm" min="30" max="50" step="1" value="40" aria-label="Typing speed in words per minute" />
+        <div class="speed-readout">
+          <span id="cps">3.33 cps</span>
+          <span id="msPerChar">300 ms/char</span>
+          <span id="duration">—</span>
+        </div>
+      </section>
+
+      <section>
+        <div class="mode-head">
+          <h2>Where to type</h2>
+          <span class="hint">hotkey starts</span>
+        </div>
+        <div class="segmented" role="radiogroup" aria-label="Insertion mode">
+          <button type="button" role="radio" aria-checked="true" data-mode="insert">At caret</button>
+          <button type="button" role="radio" aria-checked="false" data-mode="replace">Replace all</button>
+        </div>
+        <p class="warn mode-warning" id="replaceWarn" hidden>
+          Replace-all selects the entire document first. A mis-timed hotkey can erase existing work.
+        </p>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Human cadence</h2>
+        </div>
+        <div class="toggles">
+          <label class="check"><input type="checkbox" id="jitter" /> Rhythm jitter (Gaussian)</label>
+          <label class="check"><input type="checkbox" id="mistakes" /> Occasional mistakes + fix</label>
+          <label class="check"><input type="checkbox" id="pauseOnBlur" /> Pause when tab loses focus</label>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Current tab</h2>
+          <button type="button" class="mini ghost" id="refreshTab">Refresh</button>
+        </div>
+        <p class="detection-body" id="tabStatus" data-state="idle">Checking…</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span class="save-state" id="saveState">Loaded</span>
+      <button type="button" class="mini ghost" id="resetBtn">Reset settings</button>
+    </footer>
+    <p class="devnote">
+      Skeleton build (M0): settings persist and the overlay is live. Hotkeys and the typing engine
+      arrive in M2–M5, so nothing types yet.
+    </p>
+
+    <script src="../shared/protocol.js"></script>
+    <script src="../background/settings.js"></script>
+    <script src="../content/engine/cadence.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
