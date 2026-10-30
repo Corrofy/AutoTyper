@@ -1,158 +1,178 @@
-# AutoTyper Pro - Cross-Browser Extension
+# AutoTyper Pro — Cross-Browser Extension & Web Simulator
 
-> Auto-types pasted snippets and clipboard text with realistic keystrokes, anti-paste bypass, in-page command palette, and customizable keyboard shortcuts. Compatible with **Google Chrome**, **Microsoft Edge**, **Brave**, **Opera**, and **Mozilla Firefox**.
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-19-blue.svg)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-8-646CFF.svg)](https://vitejs.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38BDF8.svg)](https://tailwindcss.com/)
 
----
-
-## 📁 Build Output Overview
-
-When you build or compile the extension, the final ready-to-load packages are generated inside the **`./build`** directory:
-
-```
-./build/
-├── chromium/             <-- Load this into Chrome, Brave, Edge, Opera
-│   ├── manifest.json     (Chromium MV3 with background service worker)
-│   ├── background.js
-│   ├── content.js
-│   ├── content.css
-│   ├── popup.html & popup.js
-│   ├── options.html & options.js
-│   └── icons/
-├── firefox/              <-- Load this into Mozilla Firefox
-│   ├── manifest.json     (Firefox MV3 with Gecko ID & background scripts)
-│   ├── background.js
-│   ├── content.js
-│   ├── content.css
-│   ├── popup.html & popup.js
-│   ├── options.html & options.js
-│   └── icons/
-└── extension/            <-- Default Chromium unpacked target
-```
+> **AutoTyper Pro** automatically types pasted snippets and clipboard text with realistic keystrokes, authentic timing jitter, anti-paste bypass heuristics, mechanical keyboard sound synthesis, an in-page command palette, and customizable keyboard shortcuts. Compatible with **Google Chrome**, **Microsoft Edge**, **Brave**, **Opera**, and **Mozilla Firefox**.
 
 ---
 
-## 🛠️ How to Compile / Build the Extension
+## 📖 Quick Links
 
-To compile the latest extension files into the `./build` directory at any time, run:
-
-```bash
-# Build only the extension packages into ./build
-npm run build:extension
-
-# Or build both the web simulator and extension packages
-npm run build
-```
-
-This compiles:
-1. `./build/chromium/` — Manifest V3 tailored for Chromium engines.
-2. `./build/firefox/` — Manifest V3 tailored for Firefox Gecko engine (`browser_specific_settings.gecko.id: autotyper-pro@example.com`).
-3. `./build/extension/` — Universal unpacked build.
+- [📋 Architecture & Future Roadmap](docs/summary.md) — System design summary, data flow, and roadmap for future addons.
+- [🛠️ Build & Installation Guide](docs/build-instructions.md) — Step-by-step instructions for building, packaging, and loading extensions.
+- [🤝 Contributing Guidelines](docs/contributing.md) — Architecture breakdown, coding standards, and PR checklist.
+- [📝 Audit & Fixes Log](docs/fixes.md) — Complete record of audit findings, bugs fixed, and architectural hardening.
 
 ---
 
-## 🚀 How to Install and Test in Chromium Browsers
-*(Google Chrome, Brave, Microsoft Edge, Opera, Vivaldi)*
+## ✨ Key Features
 
-1. Ensure the extension is built (run `npm run build:extension` or use the existing `./build/chromium` folder).
-2. Open your browser and navigate to the Extensions management page:
-   - **Google Chrome / Brave**: `chrome://extensions`
-   - **Microsoft Edge**: `edge://extensions`
-   - **Opera**: `opera://extensions`
-3. In the top-right corner, toggle **Developer mode** to **ON**.
-4. Click the **"Load unpacked"** button.
-5. In the file picker, select the **`./build/chromium`** folder (or the extracted folder if using ZIP).
-6. Click **Select Folder**.
-7. The **AutoTyper Pro** icon will appear in your extensions list and toolbar. Pin it to your toolbar for fast access!
+### 1. ⌨️ Authentic Human Typing Simulation
+- **WPM & Cadence Control**: Select from speed presets (*Human 75 WPM*, *Steady*, *Turbo*, or *Custom*) with adjustable target WPM and base delays.
+- **Natural Jitter**: Applies configurable Gaussian variance between consecutive keystrokes so typing feels organic.
+- **Punctuation & Boundary Pacing**: Automatically pauses at sentence boundaries (`.`, `!`, `?`, `;`, newlines) and word spaces to mirror natural human cadence.
+
+### 2. 🛡️ Anti-Paste Bypass Heuristics
+- Many proctored testing portals, corporate hiring platforms, and financial forms block pasting via:
+  ```html
+  <input onpaste="return false;" />
+  ```
+- AutoTyper Pro bypasses this restriction by generating authentic browser `KeyboardEvent`s (`keydown`, `keypress`, `keyup`) alongside native `beforeinput` and `input` events for every character.
+- Online editors (including **Monaco Editor / OneCompiler**, **CodeMirror**, and **Quill**) receive genuine keystrokes with strictly isolated modifier flags, preventing accidental trigger of editor commands like `Ctrl+F` or `Ctrl+P`.
+
+### 3. 🎯 Mistake Modes & Manual Typo Override
+- **Manual Override Mode (Recommended)**: Keeps typing 100% clean by default, but allows on-demand mistakes anytime:
+  - **Keyboard Shortcut**: Press **`Alt + M`** during active typing.
+  - **Floating HUD Button**: Click **`+Mistake`** on the bottom-right in-page floating HUD.
+  - When triggered, the engine hits a realistic adjacent QWERTY key, pauses in human hesitation (~150ms), presses backspace to delete it, and resumes clean typing.
+- **100% Flawless Mode**: Completely disables all typos and backspacing for mission-critical input.
+- **Random Heuristic Mode**: Statistical typo injection with an adjustable frequency slider.
+
+### 4. 🔍 In-Page Quick Snippet Command Palette (`Alt + K`)
+- Press **`Alt + K`** on any webpage to bring up a sleek in-page command palette overlay.
+- Quickly search snippets by title, tag, or trigger abbreviation.
+- Navigate with `↑` / `↓` arrow keys and press `Enter` to auto-type directly into the active field.
+
+### 5. 🗂️ Snippet Management & Dynamic Template Tags
+- Manage an unlimited snippet library categorized by type (*Email*, *Code*, *Forms*, *Chat*, *Testing*, *Custom*).
+- **Dynamic Template Variables**:
+  - `{{date}}` — Current locale date (e.g. `10/30/2026`)
+  - `{{time}}` — Current locale time (e.g. `1:15 PM`)
+  - `{{weekday}}` — Day of week (e.g. `Friday`)
+  - `{{month}}` — Current month (e.g. `October`)
+  - `{{year}}` — Current year (e.g. `2026`)
+  - `{{timestamp}}` — ISO 8601 timestamp
+  - `{{name}}` — Contact name
+  - `{{email}}` — Contact email
+  - `{{ticket_id}}` — Random ticket/incident identifier
+- **Abbreviation Triggers**: Type `:sig`, `:meeting`, or any custom prefix followed by `Tab`, `Space`, or `Enter` to expand in place.
+- **Per-Snippet Shortcuts**: Assign direct global hotkeys (e.g. `Alt+1`, `Ctrl+Alt+S`) to individual snippets.
+- **JSON Import / Export**: Backup, share, and restore snippet collections safely.
+
+### 6. 🔊 WebAudio Mechanical Keyboard Synthesizer
+- Built-in WebAudio synthesizer with zero external audio assets.
+- Sound profiles: **Cherry MX Blue** (clicky), **Cherry MX Brown** (tactile), and **Cherry MX Red** (linear).
+- Adjustable synthesizer volume and instant mute toggle.
+
+### 7. 🌐 Cross-Browser Native Extension Packages
+- Emits fully compliant, validated Manifest V3 extensions for both browser engines:
+  - **Chromium** (Chrome, Edge, Brave, Opera): Manifest V3 with background service worker, offscreen clipboard bridge, and PNG icon suite.
+  - **Mozilla Firefox**: Gecko Manifest V3 with background page and Gecko add-on ID.
+- In-browser dynamic ZIP exporter: Package customized extensions directly from the web interface.
 
 ---
 
-## 🦊 How to Install and Test in Mozilla Firefox
-
-1. Ensure the extension is built (run `npm run build:extension` or use the existing `./build/firefox` folder).
-2. Open **Firefox** and enter this URL in the address bar:
-   ```
-   about:debugging#/runtime/this-firefox
-   ```
-3. Look for the **"Temporary Extensions"** section.
-4. Click the **"Load Temporary Add-on..."** button.
-5. Browse into the **`./build/firefox`** directory and select the **`manifest.json`** file.
-6. Click **Open**.
-7. **AutoTyper Pro** is now active in Firefox for testing and immediate use!
-
-*(Note: Temporary extensions in Firefox remain active until Firefox is restarted. For permanent local installation, you can zip the contents of `./build/firefox/` and install via `about:addons` > "Install Add-on From File").*
-
----
-
-## ⌨️ Features & Default Keyboard Shortcuts
+## ⌨️ Default Keyboard Shortcuts
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| **`Alt + Shift + V`** | **Auto-Type Clipboard** | Types the current clipboard text into the focused input or form field with natural human timing. |
-| **`Alt + M`** | **Trigger Manual Mistake** | **Manual Mistake Override**: Injects an intentional human-like typo with realistic hesitation and immediate backspace correction. |
-| **`Alt + K`** | **In-Page Snippet Palette** | Opens a floating command palette on any page to search and select snippets using `↑`/`↓` and `Enter`. |
-| **`Alt + Shift + O`** | **Open Snippet Manager** | Opens the extension settings and snippet management interface. |
-| **`Escape`** | **Emergency Stop** | Immediately cancels any ongoing auto-typing simulation. |
-| **`:prefix + Tab`** | **Abbreviation Expansion** | Type `:sig`, `:email`, or any custom trigger prefix followed by `Tab` to expand it in-place. |
-| **Per-Snippet** | **Direct Hotkeys** | Assign custom keybindings (e.g. `Alt+1`, `Ctrl+Alt+S`) directly to individual snippets in the manager. |
+| **`Alt + Shift + V`** | **Auto-Type Clipboard** | Simulates typing the clipboard text into the active field. |
+| **`Alt + K`** | **Snippet Palette** | Opens the in-page command palette overlay. |
+| **`Alt + M`** | **Trigger Typo Mistake** | Injects an intentional typo and backspace correction during typing. |
+| **`Alt + Shift + O`** | **Open Snippet Manager** | Launches the extension options / snippet management page. |
+| **`Escape`** | **Emergency Stop** | Immediately aborts any ongoing simulated typing session. |
+| **`:prefix + Tab`** | **Abbreviation Expansion** | Expands abbreviation triggers (e.g. `:sig` + `Tab`) into full snippets. |
+| **Custom Hotkeys** | **Per-Snippet Keybindings** | Direct shortcuts assigned to individual snippets (e.g. `Alt+1`). |
 
-All shortcuts are 100% configurable in the extension's **Settings & Snippet Manager** page (`options.html`).
-
----
-
-## 🎯 Manual Mistake Override & Editor Compatibility (OneCompiler / Monaco)
-
-### Why online IDEs (OneCompiler, Monaco, VS Code Web) were triggering Ctrl+F or Command Palettes:
-In advanced browser-based code editors like Monaco (used by **OneCompiler**, GitHub Codespaces, etc.), simulated `KeyboardEvent` objects must strictly sanitize modifier keys (`ctrlKey: false`, `altKey: false`, `metaKey: false`) and provide canonical `code` mappings (such as `KeyF` vs letters without modifiers). Without strict isolation, Monaco's internal keybinding resolver would misinterpret simulated keystrokes as editor commands like `Ctrl+F` (Find) or `Ctrl+Shift+P` (Command Palette).
-
-### The Solution & New Manual Mistake Control:
-1. **Zero Unexpected Typos (Default `Manual Override`)**:
-   - The engine now defaults to **Manual Mistake Mode** (`mistakeMode: 'manual'`). Auto-typing in online compilers is 100% clean and pristine by default.
-2. **On-Demand Manual Mistakes**:
-   - **Keyboard Shortcut**: Press **`Alt + M`** (or your custom recorded hotkey) at any moment while typing is active.
-   - **Floating HUD Button**: Click the orange **`+Mistake (Alt+M)`** button on the bottom-right in-page floating HUD.
-   - When triggered, the engine realistically types an adjacent QWERTY key, pauses in human-like realization (~150ms), presses backspace to delete it, and resumes clean typing.
-3. **Three Mistake Modes in Settings**:
-   - **Manual Override (Recommended)**: Flawless typing with on-demand manual triggers via hotkey or HUD button.
-   - **100% Flawless**: Completely disables all typos under all conditions.
-   - **Random Heuristic**: Traditional statistical typo simulation with adjustable error rate slider.
+*All shortcuts are fully configurable in settings and reject bare keys to prevent interference with normal typing.*
 
 ---
 
-## 🛡️ Anti-Paste Bypass: How It Works
+## 🚀 Quick Start
 
-Many web applications (such as banking forms, login verification, or proctored test fields) disable pasting with:
-```html
-<input onpaste="return false;" />
+### 1. Run the Web Simulator Locally
+```bash
+# Install dependencies
+npm install
+
+# Start Vite dev server on port 3000
+npm run dev
 ```
-Standard clipboard pastes trigger the browser's `paste` event and get blocked.
+Open [http://localhost:3000](http://localhost:3000) to test typing heuristics, the strict anti-paste field, and audio feedback in the browser simulator.
 
-**AutoTyper Pro bypasses this restriction completely**:
-1. When you trigger AutoTyper (via `Alt+Shift+V`, context menu, or snippet palette), it reads the text and dispatches genuine `KeyboardEvent` sequences (`keydown`, `keypress`, `keyup`) alongside native `beforeinput` and `input` events for every character.
-2. Websites treat these as genuine physical keyboard presses from the user rather than clipboard pastes.
-3. It emulates natural human typing cadence, configurable WPM speed, realistic jitter variance, and optional typos with auto-backspace correction.
+### 2. Compile the Browser Extensions
+```bash
+# Compiles unpacked extensions into ./build/
+npm run build:extension
+```
 
----
+Output folders:
+- **`./build/chromium/`** — Load unpacked in Chrome, Brave, Edge, or Opera (`chrome://extensions` > Developer mode > Load unpacked).
+- **`./build/firefox/`** — Load temporary add-on in Firefox (`about:debugging#/runtime/this-firefox` > Load Temporary Add-on > select `manifest.json`).
 
-## 🗂️ Snippet Management & Dynamic Templates
-
-In the **Snippet Manager** (`options.html` or in the web dashboard):
-- **Add & Edit Snippets**: Provide custom titles, categories, and multiple tags (`#work`, `#code`, `#email`).
-- **Dynamic Variable Tags**: Insert auto-interpolated variables:
-  - `{{date}}` — Current date (e.g., `10/29/2026`)
-  - `{{time}}` — Current time (e.g., `10:15 PM`)
-  - `{{weekday}}` — Current day of the week (e.g., `Thursday`)
-  - `{{year}}` — Current year (e.g., `2026`)
-  - `{{name}}` — Contact name
-  - `{{email}}` — Contact email
-- **Search & Tag Filter**: Rapidly filter snippets by tag chips or real-time text search.
-- **Export / Import**: Backup your snippets to `autotyper-snippets.json` or import an existing snippet library.
+For complete build options and loading instructions, see [BuildInstructions.md](BuildInstructions.md).
 
 ---
 
-## 🧪 Testing with the Web Simulator
+## 🧪 Testing the Simulator
 
-You can test the keystroke emulation and anti-paste bypass live in the web app before loading it into your browser:
-1. Run `npm run dev` and open the local web interface.
-2. Select the **"Live Simulator"** tab.
-3. Switch the target to **"Strict Anti-Paste Field"** to test simulated keystrokes against a paste-locked input.
-4. Open the **"Keystroke Event Inspector"** to monitor real-time DOM events being dispatched.
+1. Start the app via `npm run dev` and navigate to the **Live Simulator** tab.
+2. Choose a target test environment:
+   - **Strict Anti-Paste Field**: Emulates proctored exam or banking fields that block `Ctrl+V`.
+   - **Standard Form Input**: Test single-line form inputs and search bars.
+   - **Code Editor**: Test multi-line code typing with authentic indentation.
+   - **Rich Text Document**: Test `contenteditable="true"` document handling (Notion/Google Docs style).
+3. Click **"Auto-Type into Target"** to watch characters stream into the field.
+4. Inspect real-time DOM events (`keydown`, `keypress`, `beforeinput`, `input`, `keyup`) in the **Keystroke Event Inspector**.
+
+---
+
+## 📁 Repository Structure
+
+```
+auto_typer/
+├── src/
+│   ├── components/       # React UI tabs, modals, HUD & controls
+│   ├── data/             # Default snippets, default settings & icon assets
+│   ├── types/            # TypeScript type definitions
+│   ├── utils/            # Typing engines, extension generator & audio synthesizer
+│   ├── App.tsx           # Main application state & global shortcut router
+│   └── main.tsx          # React application entry point
+├── scripts/
+│   └── build-extension.ts# Extension compilation script with manifest validator
+├── build/                # Compiled browser extension targets (Chromium & Firefox)
+├── dist/                 # Production web build (Vite output)
+├── docs/                 # Documentation directory
+│   ├── summary.md        # Architecture summary & future addons roadmap
+│   ├── build-instructions.md # Complete build, packaging & loading instructions
+│   ├── contributing.md   # Development workflow, coding style & PR guide
+│   └── fixes.md          # Architectural audit log & bug fixes
+└── LICENSE               # Apache 2.0 License
+```
+
+---
+
+## 🛠️ Verification & Quality Checks
+
+Run the automated validation suite before submitting pull requests:
+
+```bash
+# Type check (strict TypeScript)
+npm run lint
+
+# Production build
+npm run build
+
+# Syntax check all generated extension JS files
+for f in $(find build -name "*.js"); do node --check "$f"; done
+```
+
+---
+
+## 📄 License
+
+This project is licensed under the [Apache 2.0 License](LICENSE).

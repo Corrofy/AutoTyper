@@ -33,6 +33,11 @@ function buildExtension(target: 'chrome' | 'firefox', outputSubdir: string) {
     }
   }
 
+  const rootLicense = path.join(rootDir, 'LICENSE');
+  if (fs.existsSync(rootLicense)) {
+    fs.copyFileSync(rootLicense, path.join(targetDir, 'LICENSE'));
+  }
+
   validateManifest(targetDir);
 
   console.log(`[Build] Generated ${files.length} extension files in ${path.relative(rootDir, targetDir)}`);
