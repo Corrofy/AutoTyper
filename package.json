@@ -8,8 +8,10 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build && tsx scripts/build-extension.ts",
     "build:extension": "tsx scripts/build-extension.ts",
+    "package": "tsx scripts/package-release.ts",
+    "package:release": "tsx scripts/package-release.ts",
     "preview": "vite preview",
-    "clean": "rm -rf dist build server.js",
+    "clean": "rm -rf dist build release server.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

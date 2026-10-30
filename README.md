@@ -12,6 +12,7 @@
 
 ## 📖 Quick Links
 
+- [🚀 GitHub Release Guide](docs/releaseGuide.md) — How to package and distribute zero-compile ZIP releases for friends.
 - [📋 Architecture & Future Roadmap](docs/summary.md) — System design summary, data flow, and roadmap for future addons.
 - [🛠️ Build & Installation Guide](docs/build-instructions.md) — Step-by-step instructions for building, packaging, and loading extensions.
 - [🤝 Contributing Guidelines](docs/contributing.md) — Architecture breakdown, coding standards, and PR checklist.
@@ -148,6 +149,7 @@ auto_typer/
 ├── dist/                 # Production web build (Vite output)
 ├── docs/                 # Documentation directory
 │   ├── summary.md        # Architecture summary & future addons roadmap
+│   ├── releaseGuide.md   # GitHub release packaging & distribution guide
 │   ├── build-instructions.md # Complete build, packaging & loading instructions
 │   ├── contributing.md   # Development workflow, coding style & PR guide
 │   └── fixes.md          # Architectural audit log & bug fixes

@@ -176,6 +176,7 @@ When developing new addons, maintain these security best practices:
 
 ## 📚 6. Documentation Index
 
+- [Release Guide](releaseGuide.md) — Step-by-step instructions for packaging and publishing GitHub releases.
 - [Build Instructions](build-instructions.md) — Comprehensive guide to compiling, packaging, and loading extensions.
 - [Contributing Guidelines](contributing.md) — Coding conventions, testing workflow, and PR checklist.
 - [Fixes Audit Log](fixes.md) — Detailed technical audit of bugs found and resolved.
