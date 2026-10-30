@@ -29,6 +29,36 @@ This document records every issue found in the audit and the fix applied. Items 
 - **Binary pipeline:** `GeneratedExtensionFile` gained an optional `encoding: 'utf8' | 'base64'` field. The build script decodes base64 before writing, and the ZIP export passes `{ base64: true }` to JSZip. The code viewer shows a placeholder for binary assets instead of dumping base64.
 - **Build guard:** The build script validates that every file referenced by the manifest actually exists in the generated package and fails the build otherwise.
 
+### P0-4. Cascading indentation blowout and auto-closing bracket collision in Code Editors
+
+- **Files:** `src/utils/autoTyperEngine.ts`, `src/utils/extensionGenerator.ts` (`contentJs`)
+- **Visual Reference:** `screenshots/malformedOnTyping.png`
+- **Problem:** When typing multiline code into web code editors (Monaco Editor, CodeMirror 5/6, Ace Editor, or IDE textareas), inserting a newline character causes the editor's auto-indentation rule (`TypeWithAutoIndentCommand` / `newlineAndIndent`) to automatically insert leading spaces/tabs on the new line. AutoTyper then typed the snippet's leading whitespace on top of the editor's auto-indent, causing each consecutive line to shift further right in a cascading triangular blowout (+4, +8, +12, +16 spaces). Additionally, when typing opening delimiters (`{`, `(`, `[`, `"`, `'`), code editors automatically inserted matching closing delimiters, which collided with the snippet's closing characters and created duplicate tokens (e.g. `}}` or `""`).
+- **Fix:**
+  - Added **Smart Indentation Reconciliation** (`getActiveLineLeadingIndent`): After typing `\n`, the engine detects the indentation already provided by the editor. If the snippet's next line starts with identical indentation, the engine skips typing those duplicate whitespace characters. If the editor indented further than the snippet requires (e.g. at a closing brace or unindented line), the engine automatically backspaces the excess indentation back to the target column.
+  - Added **Auto-Closing Bracket Collision Prevention** (`isNextCharInEditor`, `stepOverChar`): When encountering a closing character that the editor has already auto-inserted directly after the caret, the engine steps over it (`ArrowRight` or caret advance) instead of typing a duplicate character.
+  - Implemented with full Dual-Engine Parity across both the web simulator and the extension content script.
+
+### P0-5. Background timer throttling and focus loss desynchronization on tab/window blur
+
+- **Files:** `src/utils/autoTyperEngine.ts`, `src/utils/extensionGenerator.ts` (`contentJs`, `contentCss`), `src/types/extension.ts`, `src/components/ConfigTab.tsx`, `src/App.tsx`
+- **Visual Reference:** `screenshots/focusIssue.png`
+- **Problem:** When the user switched browser tabs or minimized the window during an active typing session, browsers throttled background timers (`setTimeout` delayed to 1000ms+), and the target element in the page lost DOM focus. AutoTyper continued firing synthetic keystrokes and `execCommand` into an unfocused target or `document.body`. When the tab regained focus, characters were dropped, caret jumped, and typing suddenly resumed into whatever random element was clicked. Furthermore, elapsed time accumulated while backgrounded, corrupting WPM calculations.
+- **Fix:**
+  - Added **Automatic Focus-Loss Detection & Auto-Pause**: Registered `visibilitychange`, `window.blur`, and `window.focus` listeners during active typing sessions. When `document.hidden` becomes true or the window blurs, the session freezes immediately (`pausedDueToFocusLoss = true`).
+  - Added **Re-anchoring & Smooth Resume**: When the tab regains visibility/focus, the engine re-focuses the target editable element (`focusEditable(target)`), restores the caret, allows a 150ms DOM stabilization delay, and resumes typing seamlessly from the exact character index where it was interrupted.
+  - Added **Accurate WPM Calculation**: Excluded all paused duration (`totalPausedMs`) from elapsed time calculations so speed metrics remain strictly accurate.
+  - Added **Floating HUD Pause/Resume Control & Hotkey**: Added a responsive Pause/Resume toggle button to the floating HUD (`#at-hud-pause`), dynamic title indicators (`Paused (Tab Inactive)` / `Paused`), and a configurable keyboard shortcut (`Alt+P`).
+
+### P0-6. On-Page Typing Break (Pause/Play) and Live Speed Control
+
+- **Files:** `src/utils/autoTyperEngine.ts`, `src/utils/extensionGenerator.ts` (`contentJs`, `contentCss`, `options.html`, `options.js`), `src/components/TypingHUD.tsx`, `src/App.tsx`, `src/components/ConfigTab.tsx`
+- **Problem:** Users could not take breaks during long auto-typing sessions, nor could they adjust typing speed on the fly without navigating away to the settings page and cancelling their current typing session.
+- **Fix:**
+  - Added **Direct In-Page Speed Controls**: Embedded real-time speed steppers (`[-] WPM [+]`) and a one-click `⚡ Turbo` toggle directly on the floating HUD in both the browser extension content script and the web simulator. Speed changes immediately take effect on the very next keystroke calculation.
+  - Added **On-Page Speed Shortcuts**: Bound `Alt+[` to decrease speed by 10 WPM and `Alt+]` to increase speed by 10 WPM live on any active web page without needing to touch the mouse.
+  - Added **Interactive Pause & Break Mode**: Prominent Pause / Play button with clear visual states (`⏸ Pause` vs pulsing emerald `▶ Resume`), display of paused break status, and `Alt+P` keyboard shortcut to freeze and resume at any moment. Excludes pause break duration from WPM metrics.
+
 ---
 
 ## P1 — Major Functional Bugs
@@ -211,6 +241,9 @@ This document records every issue found in the audit and the fix applied. Items 
 - [x] P0-1 missing `interpolateTags`
 - [x] P0-2 missing snippet palette + focus restore
 - [x] P0-3 PNG icons + binary pipeline + manifest guard
+- [x] P0-4 smart code indentation reconciliation & bracket collision fix
+- [x] P0-5 background timer throttle & tab focus loss auto-pause / refocus
+- [x] P0-6 on-page typing break (pause/play) and live speed controller
 - [x] P1-1 export browser selection
 - [x] P1-2 clipboard via extension context/offscreen
 - [x] P1-3 Type actions start typing

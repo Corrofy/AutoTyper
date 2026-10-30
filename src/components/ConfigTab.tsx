@@ -544,6 +544,27 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
                 }
               />
             </div>
+
+            {/* 6. Pause / Resume Typing Hotkey */}
+            <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+              <div>
+                <span className="font-semibold text-slate-200 block">
+                  Pause / Resume Typing Hotkey
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  Toggle pause/resume during an active typing session.
+                </span>
+              </div>
+              <ShortcutRecorder
+                value={settings.shortcuts?.pauseTyping}
+                onChange={(newVal) =>
+                  update('shortcuts', {
+                    ...settings.shortcuts,
+                    pauseTyping: newVal || 'Alt+P',
+                  })
+                }
+              />
+            </div>
           </div>
 
           <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

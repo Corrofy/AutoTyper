@@ -194,6 +194,180 @@ export function getKeystrokeSpec(char: string): KeystrokeSpec {
   };
 }
 
+/**
+ * Detect the leading whitespace indentation of the active line in an element.
+ * Works with HTMLInputElement, HTMLTextAreaElement, Monaco Editor, CodeMirror 5/6, and ContentEditable.
+ */
+export function getActiveLineLeadingIndent(el: HTMLElement | null): string {
+  if (!el) return '';
+
+  // 1. Standard Input or Textarea
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const pos = el.selectionStart ?? el.value.length;
+    const textBefore = el.value.slice(0, pos);
+    const lastLine = textBefore.split('\n').pop() || '';
+    const match = lastLine.match(/^[ \t]*/);
+    return match ? match[0] : '';
+  }
+
+  // 2. Monaco Editor (.monaco-editor)
+  const monacoContainer = el.closest ? (el.closest('.monaco-editor') as HTMLElement | null) : null;
+  if (monacoContainer) {
+    try {
+      // Method A: Check window.monaco if available in execution context
+      const win = window as any;
+      if (win.monaco?.editor) {
+        const editors = win.monaco.editor.getEditors();
+        for (const ed of editors) {
+          const dom = ed.getDomNode();
+          if (dom && (dom === monacoContainer || dom.contains(monacoContainer) || monacoContainer.contains(dom))) {
+            const pos = ed.getPosition();
+            if (pos) {
+              const line = ed.getModel().getLineContent(pos.lineNumber);
+              const leading = line.slice(0, pos.column - 1);
+              const match = leading.match(/^[ \t]*/);
+              return match ? match[0] : '';
+            }
+          }
+        }
+      }
+
+      // Method B: DOM Inspection via .cursors-layer and .view-line
+      const cursor = monacoContainer.querySelector('.cursors-layer .cursor') as HTMLElement | null;
+      const cursorTop = cursor ? cursor.style.top : null;
+      const viewLines = monacoContainer.querySelectorAll('.view-lines .view-line');
+      for (let i = 0; i < viewLines.length; i++) {
+        const vl = viewLines[i] as HTMLElement;
+        if (!cursorTop || vl.style.top === cursorTop) {
+          const text = (vl.textContent || '').replace(/\u00a0/g, ' ');
+          const match = text.match(/^[ \t]*/);
+          return match ? match[0] : '';
+        }
+      }
+    } catch {}
+  }
+
+  // 3. CodeMirror 6 (.cm-editor / .cm-content)
+  const cmEditor = el.closest ? (el.closest('.cm-editor') as HTMLElement | null) : null;
+  if (cmEditor) {
+    try {
+      const activeLine = cmEditor.querySelector('.cm-activeLine');
+      if (activeLine) {
+        const text = (activeLine.textContent || '').replace(/\u00a0/g, ' ');
+        const match = text.match(/^[ \t]*/);
+        return match ? match[0] : '';
+      }
+    } catch {}
+  }
+
+  // 4. CodeMirror 5 (.CodeMirror)
+  const cm5 = el.closest ? (el.closest('.CodeMirror') as HTMLElement | null) : null;
+  if (cm5) {
+    try {
+      const lines = cm5.querySelectorAll('.CodeMirror-line');
+      if (lines.length > 0) {
+        const lastLine = lines[lines.length - 1];
+        const text = (lastLine.textContent || '').replace(/\u00a0/g, ' ');
+        const match = text.match(/^[ \t]*/);
+        return match ? match[0] : '';
+      }
+    } catch {}
+  }
+
+  // 5. ContentEditable elements
+  if (el.isContentEditable) {
+    try {
+      const sel = window.getSelection();
+      if (sel && sel.anchorNode) {
+        let node: Node | null = sel.anchorNode;
+        if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.textContent || '';
+          const offset = sel.anchorOffset;
+          const before = text.slice(0, offset);
+          const match = before.match(/(?:^|\n)([ \t]*)$/);
+          return match ? match[1] : '';
+        }
+      }
+    } catch {}
+  }
+
+  return '';
+}
+
+/**
+ * Check if the character immediately following the cursor matches the given char
+ * (used to step over auto-closed brackets/quotes: ), }, ], ", ')
+ */
+export function isNextCharInEditor(el: HTMLElement | null, char: string): boolean {
+  if (!el) return false;
+
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const pos = el.selectionStart;
+    if (pos !== null && pos < el.value.length) {
+      return el.value[pos] === char;
+    }
+    return false;
+  }
+
+  const monacoContainer = el.closest ? (el.closest('.monaco-editor') as HTMLElement | null) : null;
+  if (monacoContainer) {
+    try {
+      const win = window as any;
+      if (win.monaco?.editor) {
+        const editors = win.monaco.editor.getEditors();
+        for (const ed of editors) {
+          const pos = ed.getPosition();
+          if (pos) {
+            const line = ed.getModel().getLineContent(pos.lineNumber);
+            return line[pos.column - 1] === char;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return false;
+}
+
+/**
+ * Step over a character after the cursor (e.g. auto-closed bracket)
+ */
+export function stepOverChar(el: HTMLElement) {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const start = el.selectionStart ?? 0;
+    el.selectionStart = el.selectionEnd = start + 1;
+    return;
+  }
+
+  const arrowEvent = new KeyboardEvent('keydown', {
+    key: 'ArrowRight',
+    code: 'ArrowRight',
+    keyCode: 39,
+    which: 39,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    ctrlKey: false,
+    altKey: false,
+    metaKey: false,
+    shiftKey: false,
+  });
+  el.dispatchEvent(arrowEvent);
+  el.dispatchEvent(new KeyboardEvent('keyup', {
+    key: 'ArrowRight',
+    code: 'ArrowRight',
+    keyCode: 39,
+    which: 39,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    ctrlKey: false,
+    altKey: false,
+    metaKey: false,
+    shiftKey: false,
+  }));
+}
+
 export interface AutoTypeOptions {
   snippetTitle: string;
   text: string;
@@ -207,11 +381,18 @@ export interface AutoTypeOptions {
 export class AutoTyperSession {
   private isCancelled = false;
   private isPaused = false;
+  private pausedDueToFocusLoss = false;
   private resolvePause: (() => void) | null = null;
   private options: AutoTypeOptions;
   private startTime = 0;
+  private totalPausedMs = 0;
+  private pauseStartTime = 0;
   private typosCorrected = 0;
   private manualMistakeRequested = false;
+  private lastProgressState: TypingProgressState | null = null;
+  private onVisibilityChange: (() => void) | null = null;
+  private onWindowBlur: (() => void) | null = null;
+  private onWindowFocus: (() => void) | null = null;
 
   constructor(options: AutoTypeOptions) {
     this.options = options;
@@ -225,8 +406,24 @@ export class AutoTyperSession {
     this.manualMistakeRequested = true;
   }
 
+  private cleanupListeners() {
+    if (this.onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
+      this.onVisibilityChange = null;
+    }
+    if (this.onWindowBlur) {
+      window.removeEventListener('blur', this.onWindowBlur);
+      this.onWindowBlur = null;
+    }
+    if (this.onWindowFocus) {
+      window.removeEventListener('focus', this.onWindowFocus);
+      this.onWindowFocus = null;
+    }
+  }
+
   public cancel() {
     this.isCancelled = true;
+    this.cleanupListeners();
     if (this.resolvePause) {
       this.resolvePause();
       this.resolvePause = null;
@@ -235,15 +432,34 @@ export class AutoTyperSession {
   }
 
   public pause() {
-    this.isPaused = true;
+    if (!this.isPaused) {
+      this.isPaused = true;
+      this.pauseStartTime = Date.now();
+      if (this.lastProgressState) {
+        this.options.onProgress?.({
+          ...this.lastProgressState,
+          isPaused: true,
+        });
+      }
+    }
   }
 
   public resume() {
     if (this.isPaused) {
       this.isPaused = false;
+      if (this.pauseStartTime > 0) {
+        this.totalPausedMs += Date.now() - this.pauseStartTime;
+        this.pauseStartTime = 0;
+      }
       if (this.resolvePause) {
         this.resolvePause();
         this.resolvePause = null;
+      }
+      if (this.lastProgressState) {
+        this.options.onProgress?.({
+          ...this.lastProgressState,
+          isPaused: false,
+        });
       }
     }
   }
@@ -256,6 +472,25 @@ export class AutoTyperSession {
       this.pause();
       return true;
     }
+  }
+
+  public setTargetWpm(wpm: number) {
+    this.options.settings.targetWpm = Math.max(15, Math.min(300, wpm));
+    if (this.options.settings.speedMode === 'turbo') {
+      this.options.settings.speedMode = 'human';
+    }
+  }
+
+  public setSpeedMode(mode: 'human' | 'steady' | 'turbo' | 'custom') {
+    this.options.settings.speedMode = mode;
+  }
+
+  public getTargetWpm(): number {
+    return this.options.settings.targetWpm;
+  }
+
+  public getSpeedMode(): string {
+    return this.options.settings.speedMode;
   }
 
   private async wait(ms: number): Promise<void> {
@@ -272,7 +507,7 @@ export class AutoTyperSession {
     const spec = getKeystrokeSpec(char);
 
     // CRITICAL: Explicitly ensure ctrlKey, altKey, metaKey are strictly false
-    // Monaco / CodeMirror will otherwise detect spurious modifiers or default keys and open Ctrl+F search or command palettes
+    // Monaco / CodeMirror will otherwise detect spurious modifiers or default keys and open search or palettes
     const event = new KeyboardEvent(type, {
       key: spec.key,
       code: spec.code,
@@ -421,18 +656,109 @@ export class AutoTyperSession {
     const totalLength = processedText.length;
     const emitKeyEvents = settings.antiPasteBypass !== false;
     this.startTime = Date.now();
+    this.totalPausedMs = 0;
+    this.pauseStartTime = 0;
     this.manualMistakeRequested = false;
 
     if (targetElement) {
       this.focusElement(targetElement);
     }
 
+    // Auto-Pause & Re-anchoring on Focus Loss / Visibility Change (Fix for tab switching desync)
+    this.onVisibilityChange = () => {
+      if (document.hidden) {
+        if (!this.isPaused && !this.isCancelled) {
+          this.pausedDueToFocusLoss = true;
+          this.pause();
+        }
+      } else {
+        if (this.pausedDueToFocusLoss && !this.isCancelled) {
+          this.pausedDueToFocusLoss = false;
+          if (targetElement) {
+            this.focusElement(targetElement);
+          }
+          setTimeout(() => {
+            if (!this.isCancelled && !document.hidden) {
+              if (targetElement) {
+                this.focusElement(targetElement);
+              }
+              this.resume();
+            }
+          }, 150);
+        }
+      }
+    };
+
+    this.onWindowBlur = () => {
+      if (!this.isPaused && !this.isCancelled) {
+        this.pausedDueToFocusLoss = true;
+        this.pause();
+      }
+    };
+
+    this.onWindowFocus = () => {
+      if (this.pausedDueToFocusLoss && !this.isCancelled) {
+        this.pausedDueToFocusLoss = false;
+        if (targetElement) {
+          this.focusElement(targetElement);
+        }
+        setTimeout(() => {
+          if (!this.isCancelled) {
+            if (targetElement) {
+              this.focusElement(targetElement);
+            }
+            this.resume();
+          }
+        }, 150);
+      }
+    };
+
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    window.addEventListener('blur', this.onWindowBlur);
+    window.addEventListener('focus', this.onWindowFocus);
+
     for (let i = 0; i < totalLength; i++) {
-      if (this.isCancelled) return;
+      if (this.isCancelled) {
+        this.cleanupListeners();
+        return;
+      }
 
       const char = processedText[i];
       const isSpace = char === ' ';
       const isEnter = char === '\n';
+      const isClosingChar = char === ')' || char === '}' || char === ']' || char === '"' || char === "'";
+
+      // SMART AUTO-CLOSING BRACKET/QUOTE HANDLING
+      // If editor auto-inserted the matching closing bracket/quote right after cursor, step over it instead of duplicating
+      if (isClosingChar && targetElement && isNextCharInEditor(targetElement, char)) {
+        stepOverChar(targetElement);
+        keyboardSound.playKeypress(settings.soundFeedback, settings.soundVolume, false, false);
+
+        const elapsed = Math.max(0, Date.now() - this.startTime - this.totalPausedMs);
+        const elapsedMinutes = elapsed / 60000;
+        const wordsTyped = (i + 1) / 5;
+        const currentWpm = elapsedMinutes > 0 ? Math.round(wordsTyped / elapsedMinutes) : settings.targetWpm;
+        const charsPerSec = elapsed > 0 ? Math.round(((i + 1) / (elapsed / 1000)) * 10) / 10 : 0;
+
+        this.lastProgressState = {
+          isTyping: true,
+          isPaused: this.isPaused,
+          snippetTitle,
+          fullText: processedText,
+          currentIndex: i + 1,
+          totalLength,
+          currentWpm,
+          charsPerSec,
+          currentKey: char,
+          elapsedMs: elapsed,
+          typosCorrected: this.typosCorrected,
+        };
+        this.options.onProgress?.(this.lastProgressState);
+
+        const delay = calculateCharacterDelay(settings, char);
+        await this.wait(delay);
+        continue;
+      }
 
       // Check whether to make a mistake (Manual override button/hotkey, or automatic if explicitly configured)
       const isAutomaticMistake =
@@ -462,7 +788,10 @@ export class AutoTyperSession {
 
           // 2. Pause in realization
           await this.wait(140 + Math.random() * 90);
-          if (this.isCancelled) return;
+          if (this.isCancelled) {
+            this.cleanupListeners();
+            return;
+          }
 
           // 3. Backspace the typo
           if (targetElement) {
@@ -504,7 +833,10 @@ export class AutoTyperSession {
 
           // 4. Pause before typing correct key
           await this.wait(100 + Math.random() * 80);
-          if (this.isCancelled) return;
+          if (this.isCancelled) {
+            this.cleanupListeners();
+            return;
+          }
         }
       }
 
@@ -523,15 +855,80 @@ export class AutoTyperSession {
       // Audio feedback
       keyboardSound.playKeypress(settings.soundFeedback, settings.soundVolume, isSpace, isEnter);
 
-      // Calculate stats
-      const elapsed = Date.now() - this.startTime;
+      // SMART CODE INDENTATION RECONCILIATION
+      // When Enter is typed, web code editors (Monaco/CodeMirror/Ace/IDE textareas) auto-indent.
+      // Reconcile editor's auto-indentation with snippet's next line to prevent cascading blowout.
+      if (isEnter && targetElement) {
+        await this.wait(12);
+        if (this.isCancelled) {
+          this.cleanupListeners();
+          return;
+        }
+
+        const editorIndent = getActiveLineLeadingIndent(targetElement);
+
+        let snippetIndent = '';
+        let lookahead = i + 1;
+        while (lookahead < totalLength && (processedText[lookahead] === ' ' || processedText[lookahead] === '\t')) {
+          snippetIndent += processedText[lookahead];
+          lookahead++;
+        }
+
+        if (editorIndent.length > 0) {
+          if (snippetIndent.startsWith(editorIndent)) {
+            // Editor already auto-inserted this indentation: skip typing those duplicate whitespace chars
+            i += editorIndent.length;
+          } else if (editorIndent.length > snippetIndent.length) {
+            // Editor auto-indented more than the snippet wants (e.g. at closing brace or unindented line)
+            // Backspace the excess spaces
+            const excess = editorIndent.length - snippetIndent.length;
+            for (let b = 0; b < excess; b++) {
+              if (emitKeyEvents) {
+                targetElement.dispatchEvent(new KeyboardEvent('keydown', {
+                  key: 'Backspace',
+                  code: 'Backspace',
+                  keyCode: 8,
+                  which: 8,
+                  bubbles: true,
+                  cancelable: true,
+                  composed: true,
+                  ctrlKey: false,
+                  altKey: false,
+                  metaKey: false,
+                  shiftKey: false,
+                }));
+              }
+              this.backspaceElement(targetElement);
+              if (emitKeyEvents) {
+                targetElement.dispatchEvent(new KeyboardEvent('keyup', {
+                  key: 'Backspace',
+                  code: 'Backspace',
+                  keyCode: 8,
+                  which: 8,
+                  bubbles: true,
+                  cancelable: true,
+                  composed: true,
+                  ctrlKey: false,
+                  altKey: false,
+                  metaKey: false,
+                  shiftKey: false,
+                }));
+              }
+            }
+            i += snippetIndent.length;
+          }
+        }
+      }
+
+      // Calculate stats (strictly excluding paused time)
+      const elapsed = Math.max(0, Date.now() - this.startTime - this.totalPausedMs);
       const elapsedMinutes = elapsed / 60000;
       const wordsTyped = (i + 1) / 5;
       const currentWpm = elapsedMinutes > 0 ? Math.round(wordsTyped / elapsedMinutes) : settings.targetWpm;
       const charsPerSec = elapsed > 0 ? Math.round(((i + 1) / (elapsed / 1000)) * 10) / 10 : 0;
 
       // Report progress
-      this.options.onProgress?.({
+      this.lastProgressState = {
         isTyping: true,
         isPaused: this.isPaused,
         snippetTitle,
@@ -543,12 +940,15 @@ export class AutoTyperSession {
         currentKey: isEnter ? 'Enter' : isSpace ? 'Space' : char,
         elapsedMs: elapsed,
         typosCorrected: this.typosCorrected,
-      });
+      };
+      this.options.onProgress?.(this.lastProgressState);
 
       // Calculate next key delay
       const delay = calculateCharacterDelay(settings, char);
       await this.wait(delay);
     }
+
+    this.cleanupListeners();
 
     // Finished typing!
     if (!this.isCancelled) {

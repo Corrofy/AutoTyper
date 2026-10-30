@@ -26,6 +26,7 @@ export interface CustomShortcutsConfig {
   openSnippetManager: string; // Default: "Alt+Shift+O"
   stopTyping: string; // Default: "Escape"
   triggerMistake: string; // Default: "Alt+M" (manual mistake injection)
+  pauseTyping?: string; // Default: "Alt+P" (toggle pause/resume)
 }
 
 export type MistakeTriggerMode = 'manual' | 'automatic' | 'disabled';

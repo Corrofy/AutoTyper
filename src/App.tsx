@@ -129,6 +129,26 @@ export default function App() {
         return;
       }
 
+      // 2b. Toggle Pause / Resume during active typing
+      const pauseKey = settings.shortcuts?.pauseTyping || 'Alt+P';
+      if (matchesShortcut(e, pauseKey) && activeSession) {
+        e.preventDefault();
+        handlePauseToggle();
+        return;
+      }
+
+      // 2c. Live speed decrease / increase shortcuts during typing (Alt+[ and Alt+])
+      if (e.altKey && e.key === '[' && activeSession) {
+        e.preventDefault();
+        handleSpeedChange(Math.max(15, settings.targetWpm - 10));
+        return;
+      }
+      if (e.altKey && e.key === ']' && activeSession) {
+        e.preventDefault();
+        handleSpeedChange(Math.min(300, settings.targetWpm + 10));
+        return;
+      }
+
       // 3. Open Snippet Command Palette (e.g. Alt+K or Alt+Shift+K)
       const pickerKey = settings.shortcuts?.openSnippetPicker || 'Alt+K';
       if (matchesShortcut(e, pickerKey)) {
@@ -199,6 +219,28 @@ export default function App() {
       const isPaused = activeSession.togglePause();
       setTypingProgress((prev) => (prev ? { ...prev, isPaused } : null));
     }
+  }, [activeSession]);
+
+  const handleSpeedChange = useCallback((newWpm: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      targetWpm: newWpm,
+      speedMode: prev.speedMode === 'turbo' ? 'human' : prev.speedMode,
+    }));
+    if (activeSession) {
+      activeSession.setTargetWpm(newWpm);
+    }
+  }, [activeSession]);
+
+  const handleToggleTurbo = useCallback(() => {
+    setSettings((prev) => {
+      const isTurbo = prev.speedMode === 'turbo';
+      const newMode = isTurbo ? 'human' : 'turbo';
+      if (activeSession) {
+        activeSession.setSpeedMode(newMode);
+      }
+      return { ...prev, speedMode: newMode };
+    });
   }, [activeSession]);
 
   const handleCancelTyping = useCallback(() => {
@@ -277,6 +319,10 @@ export default function App() {
           onCancel={handleCancelTyping}
           onTriggerMistake={() => activeSession?.triggerManualMistake()}
           mistakeShortcut={settings.shortcuts?.triggerMistake || 'Alt+M'}
+          targetWpm={settings.targetWpm}
+          speedMode={settings.speedMode}
+          onSpeedChange={handleSpeedChange}
+          onToggleTurbo={handleToggleTurbo}
         />
       )}
 

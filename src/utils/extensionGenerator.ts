@@ -691,7 +691,26 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return eventKey.toLowerCase() === mainKey.toLowerCase();
   }
 
-  // Floating HUD indicator with manual mistake trigger button
+  function updateHudSpeed() {
+    if (!hudElement) return;
+    const speedValEl = hudElement.querySelector('#at-hud-speed-val');
+    const turboBtn = hudElement.querySelector('#at-hud-turbo-btn');
+    const isTurbo = currentSettings.speedMode === 'turbo';
+    if (speedValEl) {
+      speedValEl.textContent = isTurbo ? 'TURBO' : (currentSettings.targetWpm || 75) + ' WPM';
+    }
+    if (turboBtn) {
+      if (isTurbo) {
+        turboBtn.classList.add('active');
+        turboBtn.style.background = 'rgba(245, 158, 11, 0.35)';
+      } else {
+        turboBtn.classList.remove('active');
+        turboBtn.style.background = 'transparent';
+      }
+    }
+  }
+
+  // Floating HUD indicator with live speed controls, pause/play, and mistake triggers
   function showHud(title, totalChars) {
     if (!currentSettings.floatingHudEnabled) return;
     if (!hudElement) {
@@ -700,13 +719,24 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       document.body.appendChild(hudElement);
     }
     const mistakeHotkey = (currentSettings.shortcuts && currentSettings.shortcuts.triggerMistake) || 'Alt+M';
+    const pauseHotkey = (currentSettings.shortcuts && currentSettings.shortcuts.pauseTyping) || 'Alt+P';
+    const isTurbo = currentSettings.speedMode === 'turbo';
+    const currentSpeedText = isTurbo ? 'TURBO' : (currentSettings.targetWpm || 75) + ' WPM';
+
     hudElement.innerHTML = \`
       <div class="autotyper-hud-pill">
-        <span class="autotyper-hud-pulse"></span>
+        <span class="autotyper-hud-pulse" id="at-hud-pulse-dot"></span>
         <div class="autotyper-hud-info">
-          <div class="autotyper-hud-title">\${title || 'Auto-Typing...'}</div>
+          <div class="autotyper-hud-title" id="at-hud-title-text">\${title || 'Auto-Typing...'}</div>
           <div class="autotyper-hud-stats"><span id="at-hud-count">0</span> / \${totalChars} chars</div>
         </div>
+        <div class="autotyper-hud-speed-ctrl" title="Adjust typing speed live directly from this page (Alt+[ / Alt+])">
+          <button id="at-hud-speed-down" class="at-hud-mini-btn" title="Decrease speed (-10 WPM, Alt+[)">−</button>
+          <span id="at-hud-speed-val" class="at-hud-speed-text">\${currentSpeedText}</span>
+          <button id="at-hud-speed-up" class="at-hud-mini-btn" title="Increase speed (+10 WPM, Alt+])">+</button>
+          <button id="at-hud-turbo-btn" class="at-hud-mini-btn at-hud-turbo-btn \${isTurbo ? 'active' : ''}" title="Toggle Turbo mode">⚡</button>
+        </div>
+        <button id="at-hud-pause" class="autotyper-hud-btn" style="background:#1e293b;border:1px solid #475569;" title="Pause typing to take a break (\${pauseHotkey})">⏸ Pause</button>
         <button id="at-hud-mistake" class="autotyper-hud-btn" style="background:#b45309;" title="Inject typo mistake right now (\${mistakeHotkey})">+Mistake (\${mistakeHotkey})</button>
         <button id="at-hud-stop" class="autotyper-hud-btn" title="Stop typing (Esc)">Stop</button>
       </div>
@@ -720,18 +750,89 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       };
     }
 
+    const pauseBtn = hudElement.querySelector('#at-hud-pause');
+    if (pauseBtn) {
+      pauseBtn.onclick = () => {
+        if (activeTyperSession) activeTyperSession.togglePause();
+      };
+    }
+
     const mistakeBtn = hudElement.querySelector('#at-hud-mistake');
     if (mistakeBtn) {
       mistakeBtn.onclick = () => {
         if (activeTyperSession) activeTyperSession.triggerMistake();
       };
     }
+
+    const speedDownBtn = hudElement.querySelector('#at-hud-speed-down');
+    if (speedDownBtn) {
+      speedDownBtn.onclick = () => {
+        const curWpm = currentSettings.targetWpm || 75;
+        currentSettings.targetWpm = Math.max(15, curWpm - 10);
+        currentSettings.speedMode = 'human';
+        updateHudSpeed();
+        browserAPI.storage.local.set({ settings: currentSettings });
+      };
+    }
+
+    const speedUpBtn = hudElement.querySelector('#at-hud-speed-up');
+    if (speedUpBtn) {
+      speedUpBtn.onclick = () => {
+        const curWpm = currentSettings.targetWpm || 75;
+        currentSettings.targetWpm = Math.min(300, curWpm + 10);
+        currentSettings.speedMode = 'human';
+        updateHudSpeed();
+        browserAPI.storage.local.set({ settings: currentSettings });
+      };
+    }
+
+    const turboBtn = hudElement.querySelector('#at-hud-turbo-btn');
+    if (turboBtn) {
+      turboBtn.onclick = () => {
+        currentSettings.speedMode = currentSettings.speedMode === 'turbo' ? 'human' : 'turbo';
+        updateHudSpeed();
+        browserAPI.storage.local.set({ settings: currentSettings });
+      };
+    }
   }
 
-  function updateHudProgress(index, total) {
+  function updateHudProgress(index, total, isPaused = false, pauseReason = '') {
     if (!hudElement) return;
     const countEl = hudElement.querySelector('#at-hud-count');
     if (countEl) countEl.textContent = index;
+
+    const pauseBtn = hudElement.querySelector('#at-hud-pause');
+    if (pauseBtn) {
+      if (isPaused) {
+        pauseBtn.innerHTML = '<span>▶</span> Resume';
+        pauseBtn.style.background = '#059669';
+        pauseBtn.style.color = '#ffffff';
+        pauseBtn.style.border = 'none';
+        pauseBtn.style.fontWeight = '600';
+      } else {
+        pauseBtn.innerHTML = '<span style="color:#f59e0b;">⏸</span> Pause';
+        pauseBtn.style.background = '#1e293b';
+        pauseBtn.style.color = '#f8fafc';
+        pauseBtn.style.border = '1px solid #475569';
+        pauseBtn.style.fontWeight = '500';
+      }
+    }
+
+    const titleEl = hudElement.querySelector('#at-hud-title-text');
+    if (titleEl) {
+      if (isPaused) {
+        titleEl.textContent = pauseReason ? 'Paused (' + pauseReason + ')' : 'Taking a break (Paused)';
+        titleEl.style.color = '#f59e0b';
+      } else {
+        titleEl.textContent = (activeTyperSession && activeTyperSession.title) || 'Auto-Typing...';
+        titleEl.style.color = '#f1f5f9';
+      }
+    }
+
+    const pulseDot = hudElement.querySelector('#at-hud-pulse-dot');
+    if (pulseDot) {
+      pulseDot.style.backgroundColor = isPaused ? '#f59e0b' : '#38bdf8';
+    }
   }
 
   function hideHud() {
@@ -903,6 +1004,110 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     w: ['q', 'e', 's', 'a'], x: ['z', 's', 'd', 'c'], y: ['t', 'u', 'h', 'g'], z: ['a', 's', 'x']
   };
 
+  // Detect leading whitespace of active line across inputs, textareas, Monaco, CodeMirror, and ContentEditable
+  function getActiveLineLeadingIndent(el) {
+    if (!el) return '';
+
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      const pos = el.selectionStart ?? el.value.length;
+      const textBefore = el.value.slice(0, pos);
+      const lastLine = textBefore.split('\\n').pop() || '';
+      const match = lastLine.match(/^[ \\t]*/);
+      return match ? match[0] : '';
+    }
+
+    const monacoContainer = el.closest ? el.closest('.monaco-editor') : null;
+    if (monacoContainer) {
+      try {
+        const cursor = monacoContainer.querySelector('.cursors-layer .cursor');
+        const cursorTop = cursor ? cursor.style.top : null;
+        const viewLines = monacoContainer.querySelectorAll('.view-lines .view-line');
+        for (let i = 0; i < viewLines.length; i++) {
+          const vl = viewLines[i];
+          if (!cursorTop || vl.style.top === cursorTop) {
+            const text = (vl.textContent || '').replace(/\\u00a0/g, ' ');
+            const match = text.match(/^[ \\t]*/);
+            return match ? match[0] : '';
+          }
+        }
+      } catch (e) {}
+    }
+
+    const cmEditor = el.closest ? el.closest('.cm-editor') : null;
+    if (cmEditor) {
+      try {
+        const activeLine = cmEditor.querySelector('.cm-activeLine');
+        if (activeLine) {
+          const text = (activeLine.textContent || '').replace(/\\u00a0/g, ' ');
+          const match = text.match(/^[ \\t]*/);
+          return match ? match[0] : '';
+        }
+      } catch (e) {}
+    }
+
+    const cm5 = el.closest ? el.closest('.CodeMirror') : null;
+    if (cm5) {
+      try {
+        const lines = cm5.querySelectorAll('.CodeMirror-line');
+        if (lines.length > 0) {
+          const lastLine = lines[lines.length - 1];
+          const text = (lastLine.textContent || '').replace(/\\u00a0/g, ' ');
+          const match = text.match(/^[ \\t]*/);
+          return match ? match[0] : '';
+        }
+      } catch (e) {}
+    }
+
+    if (el.isContentEditable) {
+      try {
+        const sel = window.getSelection();
+        if (sel && sel.anchorNode) {
+          let node = sel.anchorNode;
+          if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.textContent || '';
+            const offset = sel.anchorOffset;
+            const before = text.slice(0, offset);
+            const match = before.match(/(?:^|\\n)([ \\t]*)$/);
+            return match ? match[1] : '';
+          }
+        }
+      } catch (e) {}
+    }
+
+    return '';
+  }
+
+  function isNextCharInEditor(el, char) {
+    if (!el) return false;
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      const pos = el.selectionStart;
+      if (pos !== null && pos !== undefined && pos < el.value.length) {
+        return el.value[pos] === char;
+      }
+      return false;
+    }
+    return false;
+  }
+
+  function stepOverChar(el) {
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      const start = el.selectionStart ?? 0;
+      el.selectionStart = el.selectionEnd = start + 1;
+      return;
+    }
+
+    el.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39,
+      bubbles: true, cancelable: true, composed: true,
+      ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
+    }));
+    el.dispatchEvent(new KeyboardEvent('keyup', {
+      key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39,
+      bubbles: true, cancelable: true, composed: true,
+      ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
+    }));
+  }
+
   // High-fidelity character typist with safe event dispatches and manual mistake override
   async function typeSnippet(text, title = 'Auto-Typing', targetOverride = null) {
     try {
@@ -923,15 +1128,125 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       focusEditable(target);
 
       let cancelled = false;
+      let isPaused = false;
+      let pausedDueToFocusLoss = false;
+      let resolvePause = null;
+      let pauseStartTime = 0;
+      let totalPausedMs = 0;
       let manualMistakeRequested = false;
       const emitKeyEvents = currentSettings.antiPasteBypass !== false;
+      let currentIdx = 0;
+
+      const wait = async (ms) => {
+        if (cancelled) return;
+        await new Promise((r) => setTimeout(r, ms));
+        while (isPaused && !cancelled) {
+          await new Promise((resolve) => {
+            resolvePause = resolve;
+          });
+        }
+      };
+
+      const pause = (reason = '') => {
+        if (!isPaused) {
+          isPaused = true;
+          pauseStartTime = Date.now();
+          updateHudProgress(currentIdx, processedText.length, true, reason);
+        }
+      };
+
+      const resume = () => {
+        if (isPaused) {
+          isPaused = false;
+          if (pauseStartTime > 0) {
+            totalPausedMs += Date.now() - pauseStartTime;
+            pauseStartTime = 0;
+          }
+          if (resolvePause) {
+            resolvePause();
+            resolvePause = null;
+          }
+          updateHudProgress(currentIdx, processedText.length, false);
+        }
+      };
+
+      const togglePause = () => {
+        if (isPaused) {
+          resume();
+          return false;
+        } else {
+          pause('Manual');
+          return true;
+        }
+      };
+
+      // Visibility & blur listeners to auto-pause when tab is backgrounded
+      const onVisibilityChange = () => {
+        if (document.hidden) {
+          if (!isPaused && !cancelled) {
+            pausedDueToFocusLoss = true;
+            pause('Tab Inactive');
+          }
+        } else {
+          if (pausedDueToFocusLoss && !cancelled) {
+            pausedDueToFocusLoss = false;
+            focusEditable(target);
+            setTimeout(() => {
+              if (!cancelled && !document.hidden) {
+                focusEditable(target);
+                resume();
+              }
+            }, 150);
+          }
+        }
+      };
+
+      const onWindowBlur = () => {
+        if (!isPaused && !cancelled) {
+          pausedDueToFocusLoss = true;
+          pause('Focus Lost');
+        }
+      };
+
+      const onWindowFocus = () => {
+        if (pausedDueToFocusLoss && !cancelled) {
+          pausedDueToFocusLoss = false;
+          focusEditable(target);
+          setTimeout(() => {
+            if (!cancelled) {
+              focusEditable(target);
+              resume();
+            }
+          }, 150);
+        }
+      };
+
+      const cleanup = () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        window.removeEventListener('blur', onWindowBlur);
+        window.removeEventListener('focus', onWindowFocus);
+      };
+
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      window.addEventListener('blur', onWindowBlur);
+      window.addEventListener('focus', onWindowFocus);
 
       activeTyperSession = {
+        title,
         cancel: () => {
           cancelled = true;
+          if (resolvePause) {
+            resolvePause();
+            resolvePause = null;
+          }
+          cleanup();
           hideHud();
           activeTyperSession = null;
         },
+        pause,
+        resume,
+        togglePause,
+        isPaused: () => isPaused,
         triggerMistake: () => {
           if (currentSettings.mistakeMode === 'disabled') return;
           manualMistakeRequested = true;
@@ -942,10 +1257,22 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       for (let i = 0; i < processedText.length; i++) {
         if (cancelled) break;
+        currentIdx = i + 1;
 
         const char = processedText[i];
         const isEnter = char === '\\n';
         const isSpace = char === ' ';
+        const isClosingChar = char === ')' || char === '}' || char === ']' || char === '"' || char === "'";
+
+        // SMART AUTO-CLOSING BRACKET/QUOTE HANDLING
+        // If the editor already auto-closed this character right after cursor, step over it instead of duplicating
+        if (isClosingChar && isNextCharInEditor(target, char)) {
+          stepOverChar(target);
+          playKeySound(false, false);
+          updateHudProgress(i + 1, processedText.length, isPaused);
+          await wait(calculateCharacterDelay(char));
+          continue;
+        }
 
         // Check for mistake (manual button/hotkey, or automatic only if chosen)
         const isAutoMistake = currentSettings.mistakeMode === 'automatic' &&
@@ -995,7 +1322,7 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
             playKeySound(false, false);
 
             // 2. Pause in realization
-            await new Promise((resolve) => setTimeout(resolve, 140 + Math.random() * 80));
+            await wait(140 + Math.random() * 80);
             if (cancelled) break;
 
             // 3. Backspace
@@ -1024,7 +1351,7 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
 
             // 4. Pause before typing the correct key
-            await new Promise((resolve) => setTimeout(resolve, 100 + Math.random() * 60));
+            await wait(100 + Math.random() * 60);
             if (cancelled) break;
           }
         }
@@ -1081,11 +1408,58 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         playKeySound(isSpace, isEnter);
-        updateHudProgress(i + 1, processedText.length);
 
-        await new Promise((resolve) => setTimeout(resolve, calculateCharacterDelay(char)));
+        // SMART CODE INDENTATION RECONCILIATION
+        // When Enter is typed, web code editors auto-indent. Reconcile editor's indent with snippet to prevent cascading blowout.
+        if (isEnter) {
+          await wait(12);
+          if (cancelled) break;
+
+          const editorIndent = getActiveLineLeadingIndent(target);
+          let snippetIndent = '';
+          let lookahead = i + 1;
+          while (lookahead < processedText.length && (processedText[lookahead] === ' ' || processedText[lookahead] === '\\t')) {
+            snippetIndent += processedText[lookahead];
+            lookahead++;
+          }
+
+          if (editorIndent.length > 0) {
+            if (snippetIndent.startsWith(editorIndent)) {
+              // Skip duplicate typing of whitespace already inserted by editor
+              i += editorIndent.length;
+            } else if (editorIndent.length > snippetIndent.length) {
+              // Backspace excess spaces if editor indented deeper than snippet
+              const excess = editorIndent.length - snippetIndent.length;
+              for (let b = 0; b < excess; b++) {
+                if (emitKeyEvents) {
+                  target.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
+                    bubbles: true, cancelable: true, composed: true,
+                    ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
+                  }));
+                }
+                let deleted = false;
+                try { deleted = document.execCommand('delete', false); } catch (e) { deleted = false; }
+                if (!deleted) deleteCharBeforeCaret(target);
+                if (emitKeyEvents) {
+                  target.dispatchEvent(new KeyboardEvent('keyup', {
+                    key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
+                    bubbles: true, cancelable: true, composed: true,
+                    ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
+                  }));
+                }
+              }
+              i += snippetIndent.length;
+            }
+          }
+        }
+
+        updateHudProgress(i + 1, processedText.length, isPaused);
+
+        await wait(calculateCharacterDelay(char));
       }
 
+      cleanup();
       hideHud();
       activeTyperSession = null;
     } catch (err) {
@@ -1123,6 +1497,35 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
         activeTyperSession.cancel();
         return;
       }
+    }
+
+    // 1b. Pause / Resume Shortcut (default Alt+P)
+    if (matchesShortcut(e, shortcuts.pauseTyping || 'Alt+P')) {
+      if (activeTyperSession) {
+        e.preventDefault();
+        activeTyperSession.togglePause();
+        return;
+      }
+    }
+
+    // 1c. Live On-Page Speed Adjustment Shortcuts (Alt+[ and Alt+])
+    if (e.altKey && e.key === '[') {
+      const curWpm = currentSettings.targetWpm || 75;
+      currentSettings.targetWpm = Math.max(15, curWpm - 10);
+      currentSettings.speedMode = 'human';
+      updateHudSpeed();
+      browserAPI.storage.local.set({ settings: currentSettings });
+      e.preventDefault();
+      return;
+    }
+    if (e.altKey && e.key === ']') {
+      const curWpm = currentSettings.targetWpm || 75;
+      currentSettings.targetWpm = Math.min(300, curWpm + 10);
+      currentSettings.speedMode = 'human';
+      updateHudSpeed();
+      browserAPI.storage.local.set({ settings: currentSettings });
+      e.preventDefault();
+      return;
     }
 
     // 2. Manual Mistake Trigger during auto-typing (e.g. Alt+M)
@@ -1284,9 +1687,66 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
   transition: background-color 0.15s ease;
 }
 
-.autotyper-hud-btn:hover {
+#at-hud-stop:hover {
   background: #dc2626;
   color: #ffffff;
+}
+
+#at-hud-pause:hover {
+  background: #475569;
+  color: #ffffff;
+}
+
+.autotyper-hud-speed-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.at-hud-mini-btn {
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  border-radius: 4px;
+  width: 18px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.at-hud-mini-btn:hover {
+  background: #334155;
+  color: #f8fafc;
+}
+
+.at-hud-speed-text {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+  color: #818cf8;
+  min-width: 52px;
+  text-align: center;
+  user-select: none;
+}
+
+.at-hud-turbo-btn {
+  font-size: 11px;
+  color: #f59e0b;
+}
+
+.at-hud-turbo-btn.active {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fbbf24;
 }
 
 /* In-Page Quick Snippet Command Palette Overlay */
@@ -2015,6 +2475,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           <span class="hint">Click to edit</span>
         </button>
       </div>
+
+      <div class="shortcut-card">
+        <div class="shortcut-card-title">Pause / Resume Typing</div>
+        <div class="shortcut-card-desc">Temporarily freeze or resume active typing session</div>
+        <button id="sc-pause" class="recorder-btn" data-key="pauseTyping">
+          <span class="sc-val">Alt+P</span>
+          <span class="hint">Click to edit</span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -2198,10 +2667,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       openSnippetPicker: 'Alt+K',
       openSnippetManager: 'Alt+Shift+O',
       stopTyping: 'Escape',
-      triggerMistake: 'Alt+M'
+      triggerMistake: 'Alt+M',
+      pauseTyping: 'Alt+P'
     };
-  } else if (!settings.shortcuts.triggerMistake) {
-    settings.shortcuts.triggerMistake = 'Alt+M';
+  } else {
+    if (!settings.shortcuts.triggerMistake) {
+      settings.shortcuts.triggerMistake = 'Alt+M';
+    }
+    if (!settings.shortcuts.pauseTyping) {
+      settings.shortcuts.pauseTyping = 'Alt+P';
+    }
   }
 
   // --- SHORTCUT RECORDERS ---
@@ -2274,6 +2749,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupShortcutRecorder('sc-manager', 'openSnippetManager');
   setupShortcutRecorder('sc-stop', 'stopTyping');
   setupShortcutRecorder('sc-mistake', 'triggerMistake');
+  setupShortcutRecorder('sc-pause', 'pauseTyping');
 
   // --- SPEED, SOUND & MISTAKE CONTROLS ---
   const wpmInput = document.getElementById('targetWpm');

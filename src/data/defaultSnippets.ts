@@ -123,5 +123,6 @@ export const DEFAULT_SETTINGS: AutoTyperSettings = {
     openSnippetManager: 'Alt+Shift+O',
     stopTyping: 'Escape',
     triggerMistake: 'Alt+M',
+    pauseTyping: 'Alt+P',
   },
 };
