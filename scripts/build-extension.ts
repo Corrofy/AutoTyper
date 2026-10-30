@@ -26,10 +26,67 @@ function buildExtension(target: 'chrome' | 'firefox', outputSubdir: string) {
     if (!fs.existsSync(parentDir)) {
       fs.mkdirSync(parentDir, { recursive: true });
     }
-    fs.writeFileSync(fullPath, file.content, 'utf8');
+    if (file.encoding === 'base64') {
+      fs.writeFileSync(fullPath, Buffer.from(file.content, 'base64'));
+    } else {
+      fs.writeFileSync(fullPath, file.content, 'utf8');
+    }
   }
 
+  validateManifest(targetDir);
+
   console.log(`[Build] Generated ${files.length} extension files in ${path.relative(rootDir, targetDir)}`);
+}
+
+/**
+ * Fail the build when the manifest references a missing asset. This prevents
+ * shipping a package that Chrome refuses to load.
+ */
+function validateManifest(targetDir: string) {
+  const manifestPath = path.join(targetDir, 'manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const referenced = new Set<string>();
+
+  const add = (value: unknown) => {
+    if (typeof value === 'string' && value) referenced.add(value);
+  };
+  const addIconMap = (value: unknown) => {
+    if (typeof value === 'string') {
+      add(value);
+    } else if (value && typeof value === 'object') {
+      Object.values(value as Record<string, unknown>).forEach(add);
+    }
+  };
+
+  add(manifest.background?.service_worker);
+  add(manifest.background?.page);
+  (manifest.background?.scripts || []).forEach(add);
+
+  (manifest.content_scripts || []).forEach((entry: { js?: string[]; css?: string[] }) => {
+    (entry.js || []).forEach(add);
+    (entry.css || []).forEach(add);
+  });
+
+  add(manifest.action?.default_popup);
+  addIconMap(manifest.action?.default_icon);
+  addIconMap(manifest.icons);
+  add(manifest.options_ui?.page);
+  add(manifest.side_panel?.default_path);
+
+  for (const relativePath of referenced) {
+    const absolutePath = path.join(targetDir, relativePath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`[Build] manifest.json references missing file: ${relativePath} (${targetDir})`);
+    }
+
+    if (relativePath.endsWith('.png')) {
+      const header = fs.readFileSync(absolutePath).subarray(0, 8);
+      const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      if (!header.equals(pngSignature)) {
+        throw new Error(`[Build] ${relativePath} is not a valid PNG file`);
+      }
+    }
+  }
 }
 
 function main() {

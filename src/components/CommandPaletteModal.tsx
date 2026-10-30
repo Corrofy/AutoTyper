@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Play, X, Keyboard, Hash } from 'lucide-react';
+import { Search, Play, X, Hash } from 'lucide-react';
 import { Snippet } from '../types/extension.ts';
 
 interface CommandPaletteModalProps {

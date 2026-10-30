@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Snippet } from '../types/extension.ts';
 import { ShortcutRecorder } from './ShortcutRecorder.tsx';
+import { normalizeImportedSnippets } from '../utils/snippetValidation.ts';
 
 interface SnippetsTabProps {
   snippets: Snippet[];
@@ -58,7 +59,7 @@ export const SnippetsTab: React.FC<SnippetsTabProps> = ({
   const allTags = useMemo(() => {
     const tagCountMap: Record<string, number> = {};
     snippets.forEach((s) => {
-      s.tags.forEach((t) => {
+      (s.tags || []).forEach((t) => {
         const clean = t.trim().toLowerCase();
         if (clean) tagCountMap[clean] = (tagCountMap[clean] || 0) + 1;
       });
@@ -85,7 +86,7 @@ export const SnippetsTab: React.FC<SnippetsTabProps> = ({
     setFormContent(snippet.content);
     setFormShortcutTrigger(snippet.shortcutTrigger || '');
     setFormKeyboardShortcut(snippet.keyboardShortcut);
-    setFormTags(snippet.tags.join(', '));
+    setFormTags((snippet.tags || []).join(', '));
     setFormDescription(snippet.description || '');
     setIsEditorOpen(true);
   };
@@ -165,11 +166,15 @@ export const SnippetsTab: React.FC<SnippetsTabProps> = ({
   };
 
   const handleExportJSON = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(snippets, null, 2));
+    const blob = new Blob([JSON.stringify(snippets, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = dataStr;
+    a.href = url;
     a.download = 'autotyper-snippets.json';
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,21 +184,28 @@ export const SnippetsTab: React.FC<SnippetsTabProps> = ({
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (Array.isArray(parsed)) {
-          onUpdateSnippets(parsed);
-          alert(`Successfully imported ${parsed.length} snippets!`);
+        const imported = normalizeImportedSnippets(parsed);
+        if (imported.length === 0) {
+          alert('The file does not contain any snippets.');
+          return;
         }
+        onUpdateSnippets(imported);
+        alert(`Successfully imported ${imported.length} snippet${imported.length === 1 ? '' : 's'}!`);
       } catch (err) {
-        alert('Invalid JSON file format: ' + err);
+        const message = err instanceof Error ? err.message : String(err);
+        alert('Invalid snippet JSON: ' + message);
       }
     };
+    reader.onerror = () => alert('Could not read the selected file.');
     reader.readAsText(file);
+    // Allow re-importing the same file after fixing it.
+    e.target.value = '';
   };
 
   // Filter snippets by search query and active tag
   const filteredSnippets = snippets.filter((s) => {
     const matchesTag =
-      activeTag === 'all' || s.tags.map((t) => t.toLowerCase()).includes(activeTag.toLowerCase());
+      activeTag === 'all' || (s.tags || []).map((t) => t.toLowerCase()).includes(activeTag.toLowerCase());
 
     const q = searchQuery.toLowerCase().trim();
     if (!q) return matchesTag;
@@ -201,7 +213,7 @@ export const SnippetsTab: React.FC<SnippetsTabProps> = ({
     const matchesName = s.title.toLowerCase().includes(q);
     const matchesContent = s.content.toLowerCase().includes(q);
     const matchesTrigger = s.shortcutTrigger && s.shortcutTrigger.toLowerCase().includes(q);
-    const matchesTags = s.tags.some((t) => t.toLowerCase().includes(q.replace(/^#/, '')));
+    const matchesTags = (s.tags || []).some((t) => t.toLowerCase().includes(q.replace(/^#/, '')));
 
     return matchesTag && (matchesName || matchesContent || matchesTrigger || matchesTags);
   });
@@ -349,12 +361,12 @@ export const SnippetsTab: React.FC<SnippetsTabProps> = ({
                 {/* Metadata row (Zero-pill discipline: typographic separators) */}
                 <div className="flex items-center gap-2 text-[11px] text-slate-400 mb-2 flex-wrap">
                   <span className="capitalize text-slate-500">{snippet.category}</span>
-                  {snippet.tags.length > 0 && (
+                  {(snippet.tags || []).length > 0 && (
                     <>
                       <span aria-hidden="true" className="text-slate-600">·</span>
                       <span className="text-slate-400 flex items-center gap-1">
                         <Hash className="w-3 h-3 text-slate-500" />
-                        {snippet.tags.join(', ')}
+                        {(snippet.tags || []).join(', ')}
                       </span>
                     </>
                   )}

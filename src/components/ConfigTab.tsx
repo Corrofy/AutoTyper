@@ -7,12 +7,9 @@ import React from 'react';
 import {
   Sliders,
   ShieldCheck,
-  Zap,
   Volume2,
   Keyboard,
   Clock,
-  Sparkles,
-  Info,
   Check,
 } from 'lucide-react';
 import { AutoTyperSettings, KeyboardSoundType } from '../types/extension.ts';

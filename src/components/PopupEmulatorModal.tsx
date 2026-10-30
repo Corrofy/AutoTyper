@@ -10,7 +10,6 @@ import {
   Play,
   Clipboard,
   Settings,
-  Sparkles,
   Zap,
 } from 'lucide-react';
 import { Snippet, AutoTyperSettings } from '../types/extension.ts';
@@ -77,7 +76,7 @@ export const PopupEmulatorModal: React.FC<PopupEmulatorModalProps> = ({
             className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm shadow-indigo-600/30"
           >
             <Clipboard className="w-3.5 h-3.5" />
-            <span>Auto-Type Clipboard (Alt+Shift+V)</span>
+            <span>Auto-Type Clipboard ({settings.shortcuts?.autoTypeClipboard || 'Alt+Shift+V'})</span>
           </button>
 
           {/* Search bar */}

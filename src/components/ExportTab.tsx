@@ -12,17 +12,18 @@ import {
   Chrome,
   Compass,
   FolderTree,
-  ExternalLink,
   Info,
 } from 'lucide-react';
 import { Snippet, AutoTyperSettings, TargetBrowser, GeneratedExtensionFile } from '../types/extension.ts';
-import { generateExtensionFiles, createExtensionZip } from '../utils/extensionGenerator.ts';
+import { generateExtensionFiles } from '../utils/extensionGenerator.ts';
 
 interface ExportTabProps {
   snippets: Snippet[];
   settings: AutoTyperSettings;
   onDownloadZip: () => void;
   isDownloadingZip?: boolean;
+  targetBrowser: TargetBrowser;
+  onTargetBrowserChange: (browser: TargetBrowser) => void;
 }
 
 export const ExportTab: React.FC<ExportTabProps> = ({
@@ -30,8 +31,9 @@ export const ExportTab: React.FC<ExportTabProps> = ({
   settings,
   onDownloadZip,
   isDownloadingZip = false,
+  targetBrowser,
+  onTargetBrowserChange,
 }) => {
-  const [targetBrowser, setTargetBrowser] = useState<TargetBrowser>('chrome');
   const [selectedFilePath, setSelectedFilePath] = useState<string>('manifest.json');
   const [copiedCode, setCopiedCode] = useState(false);
 
@@ -41,9 +43,10 @@ export const ExportTab: React.FC<ExportTabProps> = ({
   }, [snippets, settings, targetBrowser]);
 
   const activeFile = files.find((f) => f.path === selectedFilePath) || files[0];
+  const activeFileIsBinary = activeFile?.encoding === 'base64';
 
   const handleCopyCode = () => {
-    if (activeFile) {
+    if (activeFile && !activeFileIsBinary) {
       navigator.clipboard.writeText(activeFile.content);
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2000);
@@ -79,7 +82,7 @@ export const ExportTab: React.FC<ExportTabProps> = ({
       {/* Target Browser Selector Tabs */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
         <div
-          onClick={() => setTargetBrowser('chrome')}
+          onClick={() => onTargetBrowserChange('chrome')}
           className={`p-4 rounded-xl border cursor-pointer transition-all ${
             targetBrowser === 'chrome'
               ? 'bg-indigo-950/40 border-indigo-500 text-white shadow-sm'
@@ -107,7 +110,7 @@ export const ExportTab: React.FC<ExportTabProps> = ({
         </div>
 
         <div
-          onClick={() => setTargetBrowser('firefox')}
+          onClick={() => onTargetBrowserChange('firefox')}
           className={`p-4 rounded-xl border cursor-pointer transition-all ${
             targetBrowser === 'firefox'
               ? 'bg-indigo-950/40 border-indigo-500 text-white shadow-sm'
@@ -197,9 +200,15 @@ export const ExportTab: React.FC<ExportTabProps> = ({
 
             <button
               onClick={handleCopyCode}
-              className="px-2.5 py-1 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md transition-colors flex items-center gap-1.5"
+              disabled={activeFileIsBinary}
+              className="px-2.5 py-1 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 rounded-md transition-colors flex items-center gap-1.5"
             >
-              {copiedCode ? (
+              {activeFileIsBinary ? (
+                <>
+                  <FileCode2 className="w-3.5 h-3.5" />
+                  <span>Binary Asset</span>
+                </>
+              ) : copiedCode ? (
                 <>
                   <Check className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Copied</span>
@@ -215,9 +224,19 @@ export const ExportTab: React.FC<ExportTabProps> = ({
 
           {/* Code body */}
           <div className="p-4 bg-slate-950/70 font-mono text-xs text-slate-300 overflow-x-auto max-h-[500px] leading-relaxed">
-            <pre className="whitespace-pre">
-              <code>{activeFile?.content}</code>
-            </pre>
+            {activeFileIsBinary ? (
+              <div className="p-6 text-slate-400 font-sans text-sm">
+                <div className="font-semibold text-slate-200 mb-1">Binary PNG asset</div>
+                <p>
+                  {activeFile?.path} is embedded as base64 and written as a real PNG by the build
+                  script and the ZIP exporter. Select a text file to inspect its source.
+                </p>
+              </div>
+            ) : (
+              <pre className="whitespace-pre">
+                <code>{activeFile?.content}</code>
+              </pre>
+            )}
           </div>
         </div>
       </div>

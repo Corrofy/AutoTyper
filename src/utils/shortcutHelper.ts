@@ -24,9 +24,13 @@ export function formatKeyboardEvent(e: KeyboardEvent): string | null {
   if (key === ' ') key = 'Space';
   else if (key.length === 1) key = key.toUpperCase();
 
-  // If no modifier is pressed and it's not a function key or Escape, avoid single normal characters unless specified
-  if (parts.length === 0 && !['Escape', 'Tab', 'Enter', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'].includes(key)) {
-    // A modifier is required for normal characters to avoid clashing with normal typing
+  // Require Ctrl, Alt, or Meta, or allow function keys / special navigation keys.
+  // Shift alone is rejected for printable characters so typing capital letters does not trigger shortcuts.
+  const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
+  const isFunctionKey = /^F([1-9]|1[0-2])$/.test(key);
+  const isSpecialKey = ['Escape', 'Tab', 'Enter'].includes(key);
+
+  if (!hasModifier && !isFunctionKey && !isSpecialKey) {
     return null;
   }
 

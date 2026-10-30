@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Keyboard, X, Check } from 'lucide-react';
+import { Keyboard, X } from 'lucide-react';
 import { formatKeyboardEvent } from '../utils/shortcutHelper.ts';
 
 interface ShortcutRecorderProps {
@@ -21,6 +21,7 @@ export const ShortcutRecorder: React.FC<ShortcutRecorderProps> = ({
   label,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [hintMessage, setHintMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -31,13 +32,20 @@ export const ShortcutRecorder: React.FC<ShortcutRecorderProps> = ({
 
       if (e.key === 'Escape') {
         setIsRecording(false);
+        setHintMessage(null);
         return;
       }
+
+      if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
 
       const combo = formatKeyboardEvent(e);
       if (combo) {
         onChange(combo);
         setIsRecording(false);
+        setHintMessage(null);
+      } else {
+        setHintMessage('Add Ctrl, Alt, or Meta');
+        setTimeout(() => setHintMessage(null), 1800);
       }
     };
 
@@ -51,7 +59,10 @@ export const ShortcutRecorder: React.FC<ShortcutRecorderProps> = ({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setIsRecording(true)}
+          onClick={() => {
+            setIsRecording(true);
+            setHintMessage(null);
+          }}
           className={`flex-1 px-3 py-2 rounded-lg text-xs font-mono flex items-center justify-between border transition-all ${
             isRecording
               ? 'bg-indigo-950/80 border-indigo-500 text-indigo-300 shadow-sm shadow-indigo-500/20 ring-1 ring-indigo-500 animate-pulse'
@@ -63,12 +74,14 @@ export const ShortcutRecorder: React.FC<ShortcutRecorderProps> = ({
           <div className="flex items-center gap-2 truncate">
             <Keyboard className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
             <span className="truncate">
-              {isRecording ? 'Press key combo (e.g. Alt+Shift+K)...' : value || placeholder}
+              {isRecording
+                ? hintMessage || 'Press key combo (e.g. Alt+Shift+K)...'
+                : value || placeholder}
             </span>
           </div>
           {isRecording && (
             <span className="text-[10px] bg-indigo-600 text-white px-1.5 py-0.5 rounded font-sans">
-              Listening...
+              {hintMessage ? 'Invalid' : 'Listening...'}
             </span>
           )}
         </button>

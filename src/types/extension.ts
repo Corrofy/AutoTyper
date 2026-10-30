@@ -66,9 +66,18 @@ export interface TypingProgressState {
 export interface GeneratedExtensionFile {
   name: string;
   path: string;
-  language: 'json' | 'javascript' | 'html' | 'css' | 'markdown' | 'xml';
+  language: 'json' | 'javascript' | 'html' | 'css' | 'markdown' | 'xml' | 'png';
   content: string;
   description: string;
+  /** How `content` should be written. PNG assets are stored as base64 strings. */
+  encoding?: 'utf8' | 'base64';
+}
+
+export interface AutoTypeRequest {
+  id: number;
+  text: string;
+  title: string;
+  snippetId?: string;
 }
 
 export type TargetBrowser = 'chrome' | 'firefox' | 'edge' | 'brave' | 'opera';

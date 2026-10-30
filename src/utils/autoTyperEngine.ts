@@ -221,6 +221,7 @@ export class AutoTyperSession {
    * Manually trigger a typo/mistake immediately on the next character
    */
   public triggerManualMistake() {
+    if (this.options.settings.mistakeMode === 'disabled') return;
     this.manualMistakeRequested = true;
   }
 
@@ -290,6 +291,29 @@ export class AutoTyperSession {
     el.dispatchEvent(event);
   }
 
+  private focusElement(el: HTMLElement) {
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      try {
+        el.focus();
+      } catch {}
+    }
+
+    if (el.isContentEditable) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || !sel.anchorNode || !el.contains(sel.anchorNode)) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+    }
+  }
+
   private insertCharacterIntoElement(el: HTMLElement, char: string) {
     const isEnter = char === '\n';
     const isInput = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
@@ -326,14 +350,15 @@ export class AutoTyperSession {
         input.selectionStart = input.selectionEnd = start + char.length;
         input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       } else if (el.isContentEditable) {
+        this.focusElement(el);
         const selection = window.getSelection();
         if (selection && selection.rangeCount > 0) {
           const range = selection.getRangeAt(0);
           range.deleteContents();
-          const textNode = document.createTextNode(isEnter ? '\n' : char);
-          range.insertNode(textNode);
-          range.setStartAfter(textNode);
-          range.setEndAfter(textNode);
+          const node = isEnter ? document.createElement('br') : document.createTextNode(char);
+          range.insertNode(node);
+          range.setStartAfter(node);
+          range.setEndAfter(node);
           selection.removeAllRanges();
           selection.addRange(range);
         } else {
@@ -341,8 +366,6 @@ export class AutoTyperSession {
         }
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       }
-    } else {
-      el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     }
   }
 
@@ -365,6 +388,28 @@ export class AutoTyperSession {
           input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
         }
       } else if (el.isContentEditable) {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          if (!range.collapsed) {
+            range.deleteContents();
+          } else {
+            const node = range.startContainer;
+            const offset = range.startOffset;
+            if (node.nodeType === Node.TEXT_NODE && offset > 0) {
+              (node as Text).deleteData(offset - 1, 1);
+            } else if (node.childNodes && offset > 0 && node.childNodes[offset - 1]) {
+              node.removeChild(node.childNodes[offset - 1]);
+            } else if (node.previousSibling && node.parentNode) {
+              node.parentNode.removeChild(node.previousSibling);
+            }
+          }
+          const caret = document.createRange();
+          caret.selectNodeContents(el);
+          caret.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(caret);
+        }
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       }
     }
@@ -374,11 +419,12 @@ export class AutoTyperSession {
     const { text, targetElement, settings, snippetTitle } = this.options;
     const processedText = interpolateSnippetVariables(text);
     const totalLength = processedText.length;
+    const emitKeyEvents = settings.antiPasteBypass !== false;
     this.startTime = Date.now();
     this.manualMistakeRequested = false;
 
     if (targetElement) {
-      targetElement.focus();
+      this.focusElement(targetElement);
     }
 
     for (let i = 0; i < totalLength; i++) {
@@ -403,10 +449,14 @@ export class AutoTyperSession {
         if (typoChar) {
           // 1. Type the typo
           if (targetElement) {
-            this.dispatchKeyboardEvent(targetElement, 'keydown', typoChar);
-            this.dispatchKeyboardEvent(targetElement, 'keypress', typoChar);
+            if (emitKeyEvents) {
+              this.dispatchKeyboardEvent(targetElement, 'keydown', typoChar);
+              this.dispatchKeyboardEvent(targetElement, 'keypress', typoChar);
+            }
             this.insertCharacterIntoElement(targetElement, typoChar);
-            this.dispatchKeyboardEvent(targetElement, 'keyup', typoChar);
+            if (emitKeyEvents) {
+              this.dispatchKeyboardEvent(targetElement, 'keyup', typoChar);
+            }
           }
           keyboardSound.playKeypress(settings.soundFeedback, settings.soundVolume, false, false);
 
@@ -416,32 +466,38 @@ export class AutoTyperSession {
 
           // 3. Backspace the typo
           if (targetElement) {
-            const bsEvent = new KeyboardEvent('keydown', {
-              key: 'Backspace',
-              code: 'Backspace',
-              keyCode: 8,
-              which: 8,
-              bubbles: true,
-              cancelable: true,
-              composed: true,
-              ctrlKey: false,
-              altKey: false,
-              metaKey: false,
-            });
-            targetElement.dispatchEvent(bsEvent);
+            if (emitKeyEvents) {
+              const bsEvent = new KeyboardEvent('keydown', {
+                key: 'Backspace',
+                code: 'Backspace',
+                keyCode: 8,
+                which: 8,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                ctrlKey: false,
+                altKey: false,
+                metaKey: false,
+                shiftKey: false,
+              });
+              targetElement.dispatchEvent(bsEvent);
+            }
             this.backspaceElement(targetElement);
-            targetElement.dispatchEvent(new KeyboardEvent('keyup', {
-              key: 'Backspace',
-              code: 'Backspace',
-              keyCode: 8,
-              which: 8,
-              bubbles: true,
-              cancelable: true,
-              composed: true,
-              ctrlKey: false,
-              altKey: false,
-              metaKey: false,
-            }));
+            if (emitKeyEvents) {
+              targetElement.dispatchEvent(new KeyboardEvent('keyup', {
+                key: 'Backspace',
+                code: 'Backspace',
+                keyCode: 8,
+                which: 8,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                ctrlKey: false,
+                altKey: false,
+                metaKey: false,
+                shiftKey: false,
+              }));
+            }
           }
           keyboardSound.playKeypress(settings.soundFeedback, settings.soundVolume, false, false);
           this.typosCorrected++;
@@ -454,10 +510,14 @@ export class AutoTyperSession {
 
       // Type the correct character
       if (targetElement) {
-        this.dispatchKeyboardEvent(targetElement, 'keydown', char);
-        this.dispatchKeyboardEvent(targetElement, 'keypress', char);
+        if (emitKeyEvents) {
+          this.dispatchKeyboardEvent(targetElement, 'keydown', char);
+          this.dispatchKeyboardEvent(targetElement, 'keypress', char);
+        }
         this.insertCharacterIntoElement(targetElement, char);
-        this.dispatchKeyboardEvent(targetElement, 'keyup', char);
+        if (emitKeyEvents) {
+          this.dispatchKeyboardEvent(targetElement, 'keyup', char);
+        }
       }
 
       // Audio feedback
@@ -491,6 +551,8 @@ export class AutoTyperSession {
     }
 
     // Finished typing!
-    this.options.onComplete?.();
+    if (!this.isCancelled) {
+      this.options.onComplete?.();
+    }
   }
 }

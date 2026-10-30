@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Play,
   Copy,
@@ -17,7 +17,7 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
-import { Snippet, AutoTyperSettings, TypingProgressState } from '../types/extension.ts';
+import { Snippet, AutoTyperSettings, TypingProgressState, AutoTypeRequest } from '../types/extension.ts';
 import { AutoTyperSession } from '../utils/autoTyperEngine.ts';
 
 interface SimulatorTabProps {
@@ -30,9 +30,11 @@ interface SimulatorTabProps {
   onOpenSnippetManager: () => void;
   selectedSnippetId: string;
   setSelectedSnippetId: (id: string) => void;
+  autoTypeRequest: AutoTypeRequest | null;
+  onAutoTypeRequestHandled: () => void;
 }
 
-type TargetFieldType = 'anti-paste' | 'standard' | 'code' | 'rich' | 'multiform';
+type TargetFieldType = 'anti-paste' | 'standard' | 'code' | 'rich';
 
 interface DispatchedEventLog {
   id: string;
@@ -50,27 +52,20 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
   setTypingProgress,
   selectedSnippetId,
   setSelectedSnippetId,
+  autoTypeRequest,
+  onAutoTypeRequestHandled,
 }) => {
   const [customInputText, setCustomInputText] = useState<string>('');
   const [targetField, setTargetField] = useState<TargetFieldType>('anti-paste');
   const [pasteBlockedWarning, setPasteBlockedWarning] = useState<boolean>(false);
   const [eventLogs, setEventLogs] = useState<DispatchedEventLog[]>([]);
-
-  // Form field state for multi-form
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    company: '',
-    notes: '',
-  });
+  const handledRequestRef = useRef<number | null>(null);
 
   // Target Element Refs
   const antiPasteInputRef = useRef<HTMLInputElement>(null);
   const standardInputRef = useRef<HTMLInputElement>(null);
   const codeEditorRef = useRef<HTMLTextAreaElement>(null);
   const richTextRef = useRef<HTMLDivElement>(null);
-  const multiFormRef = useRef<HTMLInputElement>(null);
 
   const selectedSnippet = snippets.find((s) => s.id === selectedSnippetId) || snippets[0];
   const effectiveText = customInputText.trim() ? customInputText : selectedSnippet?.content || '';
@@ -86,8 +81,6 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
         return codeEditorRef.current;
       case 'rich':
         return richTextRef.current;
-      case 'multiform':
-        return multiFormRef.current;
       default:
         return standardInputRef.current;
     }
@@ -127,28 +120,21 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
     };
   }, [targetField]);
 
-  // Handle normal paste attempt in the strict anti-paste field
-  const handleStrictPasteAttempt = (e: React.ClipboardEvent) => {
-    e.preventDefault();
-    setPasteBlockedWarning(true);
-    setTimeout(() => setPasteBlockedWarning(false), 4000);
-  };
-
   // Launch AutoTyper Session
-  const startAutoTyping = () => {
+  const startSession = useCallback((text: string, title: string, targetEl?: HTMLElement | null) => {
+    if (!text) return;
+
     if (activeSession) {
       activeSession.cancel();
       setActiveSession(null);
     }
 
-    const targetEl = getTargetElement();
-    if (!targetEl) return;
-
-    const title = customInputText.trim() ? 'Custom Snippet' : selectedSnippet?.title || 'Auto-Type';
+    const element = targetEl || getTargetElement();
+    if (!element) return;
 
     const session = new AutoTyperSession({
-      text: effectiveText,
-      targetElement: targetEl,
+      text,
+      targetElement: element,
       settings,
       snippetTitle: title,
       onProgress: (prog) => {
@@ -165,8 +151,73 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
     });
 
     setActiveSession(session);
-    session.start();
+    void session.start();
+  }, [activeSession, settings, targetField, setActiveSession, setTypingProgress]);
+
+  // Handle paste attempt across target fields (anti-paste block simulation vs auto-type intercept)
+  const handlePaste = (e: React.ClipboardEvent, isAntiPasteField = false) => {
+    if (settings.autoTypeOnPaste) {
+      e.preventDefault();
+      const clipText = e.clipboardData?.getData('text/plain') || '';
+      if (clipText) {
+        startSession(clipText, 'Auto-Typing Paste', e.currentTarget as HTMLElement);
+        return;
+      }
+    }
+    if (isAntiPasteField) {
+      e.preventDefault();
+      setPasteBlockedWarning(true);
+      setTimeout(() => setPasteBlockedWarning(false), 4000);
+    }
   };
+
+  // Shortcut Prefix Expansion (e.g. typing ':sig' followed by Tab or Space)
+  const handleTargetKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    const triggerKey = settings.quickTriggerKey || 'Tab';
+    const isTrigger =
+      e.key === triggerKey ||
+      (triggerKey === 'Tab' && e.key === 'Tab') ||
+      (triggerKey === 'Space' && e.key === ' ');
+
+    if (isTrigger) {
+      const target = e.currentTarget;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        const pos = target.selectionStart ?? target.value.length;
+        const textBefore = target.value.slice(0, pos);
+        const match = textBefore.match(/(:[a-zA-Z0-9_-]+|![a-zA-Z0-9_-]+)$/);
+        if (match) {
+          const trigger = match[1];
+          const found = snippets.find((s) => s.shortcutTrigger === trigger);
+          if (found) {
+            e.preventDefault();
+            const start = pos - trigger.length;
+            target.value = target.value.slice(0, start) + target.value.slice(pos);
+            target.selectionStart = target.selectionEnd = start;
+            target.dispatchEvent(new Event('input', { bubbles: true }));
+            startSession(found.content, found.title, target);
+          }
+        }
+      }
+    }
+  };
+
+  const startAutoTyping = () => {
+    const title = customInputText.trim() ? 'Custom Snippet' : selectedSnippet?.title || 'Auto-Type';
+    startSession(effectiveText, title);
+  };
+
+  // Start a session requested by another tab, the palette, the popup preview,
+  // a per-snippet hotkey, or the clipboard shortcut.
+  useEffect(() => {
+    if (!autoTypeRequest) return;
+    if (handledRequestRef.current === autoTypeRequest.id) return;
+
+    handledRequestRef.current = autoTypeRequest.id;
+    setCustomInputText('');
+    const element = getTargetElement();
+    startSession(autoTypeRequest.text, autoTypeRequest.title, element);
+    onAutoTypeRequestHandled();
+  }, [autoTypeRequest, targetField, startSession, onAutoTypeRequestHandled]);
 
   const handleClearTarget = () => {
     if (activeSession) {
@@ -184,13 +235,6 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
       el.innerText = '';
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    setFormData({
-      firstName: '',
-      lastName: '',
-      email: '',
-      company: '',
-      notes: '',
-    });
     setEventLogs([]);
   };
 
@@ -472,7 +516,8 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
                     <input
                       ref={antiPasteInputRef}
                       type="text"
-                      onPaste={handleStrictPasteAttempt}
+                      onPaste={(e) => handlePaste(e, true)}
+                      onKeyDown={handleTargetKeyDown}
                       placeholder="Try pasting with Ctrl+V (Blocked!) or click Auto-Type..."
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-red-500 shadow-inner"
                     />
@@ -514,6 +559,8 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
                     <input
                       ref={standardInputRef}
                       type="text"
+                      onPaste={(e) => handlePaste(e, false)}
+                      onKeyDown={handleTargetKeyDown}
                       placeholder="Focus here and auto-type..."
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
                     />
@@ -541,6 +588,8 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
                     <textarea
                       ref={codeEditorRef}
                       rows={12}
+                      onPaste={(e) => handlePaste(e, false)}
+                      onKeyDown={handleTargetKeyDown}
                       placeholder="// Code editor canvas. Click 'Auto-Type into Target' to stream code..."
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 leading-relaxed resize-none"
                     />
@@ -565,6 +614,7 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
                     ref={richTextRef}
                     contentEditable
                     suppressContentEditableWarning
+                    onPaste={(e) => handlePaste(e, false)}
                     data-placeholder="Click here and auto-type your rich text notes..."
                     className="w-full min-h-[220px] bg-slate-950 border border-slate-800 rounded-lg p-4 text-sm text-slate-200 focus:outline-none focus:border-amber-500 leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-slate-600"
                   />

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header.tsx';
 import { SimulatorTab } from './components/SimulatorTab.tsx';
 import { SnippetsTab } from './components/SnippetsTab.tsx';
@@ -12,22 +12,31 @@ import { ExportTab } from './components/ExportTab.tsx';
 import { TypingHUD } from './components/TypingHUD.tsx';
 import { PopupEmulatorModal } from './components/PopupEmulatorModal.tsx';
 import { CommandPaletteModal } from './components/CommandPaletteModal.tsx';
-import { Snippet, AutoTyperSettings, TypingProgressState } from './types/extension.ts';
+import { Snippet, AutoTyperSettings, TypingProgressState, AutoTypeRequest, TargetBrowser } from './types/extension.ts';
 import { DEFAULT_SNIPPETS, DEFAULT_SETTINGS } from './data/defaultSnippets.ts';
 import { AutoTyperSession } from './utils/autoTyperEngine.ts';
 import { createExtensionZip } from './utils/extensionGenerator.ts';
 import { matchesShortcut } from './utils/shortcutHelper.ts';
+import { sanitizeSnippets } from './utils/snippetValidation.ts';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'simulator' | 'snippets' | 'config' | 'export'>('simulator');
   const [isPopupPreviewOpen, setIsPopupPreviewOpen] = useState(false);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [exportBrowser, setExportBrowser] = useState<TargetBrowser>('chrome');
+  const [autoTypeRequest, setAutoTypeRequest] = useState<AutoTypeRequest | null>(null);
 
   // Load and persist snippets
   const [snippets, setSnippets] = useState<Snippet[]>(() => {
     try {
       const saved = localStorage.getItem('autotyper_snippets');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const safe = sanitizeSnippets(parsed);
+          if (safe.length > 0 || parsed.length === 0) return safe;
+        }
+      }
     } catch {
       // ignore
     }
@@ -68,12 +77,43 @@ export default function App() {
 
   const [selectedSnippetId, setSelectedSnippetId] = useState<string>(() => snippets[0]?.id || '');
 
+  const requestAutoType = useCallback((text: string, title: string, snippetId?: string) => {
+    if (!text) return;
+    if (snippetId) setSelectedSnippetId(snippetId);
+    setActiveTab('simulator');
+    setAutoTypeRequest({
+      id: Date.now() + Math.random(),
+      text,
+      title,
+      snippetId,
+    });
+  }, []);
+
+  const handleAutoTypeRequestHandled = useCallback(() => {
+    setAutoTypeRequest(null);
+  }, []);
+
+  const requestClipboardAutoType = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        alert('The clipboard is empty.');
+        return;
+      }
+      requestAutoType(text, 'Clipboard Text');
+    } catch (err) {
+      console.error('Clipboard read failed:', err);
+      alert('Could not read the clipboard. Grant clipboard permission and try again.');
+    }
+  }, [requestAutoType]);
+
   // Global Custom Keyboard Shortcuts Listener
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       // 1. Emergency Stop
       const stopKey = settings.shortcuts?.stopTyping || 'Escape';
-      if ((e.key === 'Escape' || matchesShortcut(e, stopKey)) && activeSession) {
+      const shouldStop = matchesShortcut(e, stopKey) || (settings.stopOnEscape && e.key === 'Escape');
+      if (shouldStop && activeSession) {
         e.preventDefault();
         activeSession.cancel();
         setActiveSession(null);
@@ -88,10 +128,6 @@ export default function App() {
         activeSession.triggerManualMistake();
         return;
       }
-
-      // Do not trigger global navigation shortcuts if typing inside an active input element unless a modifier is pressed
-      const target = e.target as HTMLElement;
-      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
       // 3. Open Snippet Command Palette (e.g. Alt+K or Alt+Shift+K)
       const pickerKey = settings.shortcuts?.openSnippetPicker || 'Alt+K';
@@ -113,7 +149,7 @@ export default function App() {
       const clipboardKey = settings.shortcuts?.autoTypeClipboard || 'Alt+Shift+V';
       if (matchesShortcut(e, clipboardKey)) {
         e.preventDefault();
-        setActiveTab('simulator');
+        void requestClipboardAutoType();
         return;
       }
 
@@ -121,8 +157,7 @@ export default function App() {
       for (const snip of snippets) {
         if (snip.keyboardShortcut && matchesShortcut(e, snip.keyboardShortcut)) {
           e.preventDefault();
-          setSelectedSnippetId(snip.id);
-          setActiveTab('simulator');
+          requestAutoType(snip.content, snip.title, snip.id);
           return;
         }
       }
@@ -130,17 +165,19 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [activeSession, settings.shortcuts, settings.stopOnEscape, snippets]);
+  }, [activeSession, settings.shortcuts, settings.stopOnEscape, snippets, requestAutoType, requestClipboardAutoType]);
 
   // Download Extension Zip
   const handleDownloadZip = async () => {
     try {
       setIsDownloadingZip(true);
-      const zipBlob = await createExtensionZip(snippets, settings, 'chrome');
+      const zipBlob = await createExtensionZip(snippets, settings, exportBrowser);
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'autotyper-pro-extension.zip';
+      a.download = exportBrowser === 'firefox'
+        ? 'autotyper-pro-firefox.zip'
+        : 'autotyper-pro-chromium.zip';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -154,8 +191,7 @@ export default function App() {
   };
 
   const handleTestSnippetFromLibrary = (snippet: Snippet) => {
-    setSelectedSnippetId(snippet.id);
-    setActiveTab('simulator');
+    requestAutoType(snippet.content, snippet.title, snippet.id);
   };
 
   const handlePauseToggle = useCallback(() => {
@@ -200,6 +236,8 @@ export default function App() {
             onOpenSnippetManager={() => setActiveTab('snippets')}
             selectedSnippetId={selectedSnippetId}
             setSelectedSnippetId={setSelectedSnippetId}
+            autoTypeRequest={autoTypeRequest}
+            onAutoTypeRequestHandled={handleAutoTypeRequestHandled}
           />
         )}
 
@@ -225,6 +263,8 @@ export default function App() {
             settings={settings}
             onDownloadZip={handleDownloadZip}
             isDownloadingZip={isDownloadingZip}
+            targetBrowser={exportBrowser}
+            onTargetBrowserChange={setExportBrowser}
           />
         )}
       </main>
@@ -247,11 +287,12 @@ export default function App() {
         snippets={snippets}
         settings={settings}
         onTriggerSnippet={(snip) => {
-          setSelectedSnippetId(snip.id);
-          setActiveTab('simulator');
+          setIsPopupPreviewOpen(false);
+          requestAutoType(snip.content, snip.title, snip.id);
         }}
         onTriggerClipboard={() => {
-          setActiveTab('simulator');
+          setIsPopupPreviewOpen(false);
+          void requestClipboardAutoType();
         }}
         onOpenSettings={() => {
           setActiveTab('config');
@@ -265,8 +306,8 @@ export default function App() {
         snippets={snippets}
         shortcutLabel={settings.shortcuts?.openSnippetPicker || 'Alt+K'}
         onSelectSnippet={(snip) => {
-          setSelectedSnippetId(snip.id);
-          setActiveTab('simulator');
+          setIsCommandPaletteOpen(false);
+          requestAutoType(snip.content, snip.title, snip.id);
         }}
       />
     </div>

@@ -5,6 +5,7 @@
 
 import JSZip from 'jszip';
 import { Snippet, AutoTyperSettings, GeneratedExtensionFile, TargetBrowser } from '../types/extension.ts';
+import { ICON_PNG_BASE64, ICON_SIZES } from '../data/iconAssets.ts';
 
 export function generateExtensionFiles(
   snippets: Snippet[],
@@ -12,13 +13,16 @@ export function generateExtensionFiles(
   targetBrowser: TargetBrowser = 'chrome'
 ): GeneratedExtensionFile[] {
   const isFirefox = targetBrowser === 'firefox';
+  const iconMap = Object.fromEntries(
+    ICON_SIZES.map((size) => [String(size), `icons/icon${size}.png`])
+  );
 
   // 1. Manifest
   const manifest = isFirefox
     ? {
         manifest_version: 3,
         name: 'AutoTyper Pro - Auto Type Paste & Snippets',
-        version: '1.2.0',
+        version: '1.2.1',
         description: 'Auto-types pasted text and selected snippets into any field with realistic keystrokes, anti-paste bypass, and custom keyboard shortcuts.',
         browser_specific_settings: {
           gecko: {
@@ -27,9 +31,10 @@ export function generateExtensionFiles(
           },
         },
         permissions: ['storage', 'activeTab', 'scripting', 'contextMenus', 'clipboardRead'],
+        icons: iconMap,
         action: {
           default_popup: 'popup.html',
-          default_icon: 'icons/icon128.png',
+          default_icon: iconMap,
         },
         background: {
           scripts: ['background.js'],
@@ -48,39 +53,17 @@ export function generateExtensionFiles(
           page: 'options.html',
           open_in_tab: true,
         },
-        commands: {
-          'auto-type-clipboard': {
-            suggested_key: {
-              default: settings.shortcuts?.autoTypeClipboard || 'Alt+Shift+V',
-              mac: settings.shortcuts?.autoTypeClipboard || 'Alt+Shift+V',
-            },
-            description: 'Auto-type clipboard text into active input field',
-          },
-          'open-snippet-picker': {
-            suggested_key: {
-              default: 'Alt+Shift+K',
-              mac: 'Alt+Shift+K',
-            },
-            description: 'Open in-page snippet quick selector palette',
-          },
-          'open-snippet-manager': {
-            suggested_key: {
-              default: 'Alt+Shift+O',
-              mac: 'Alt+Shift+O',
-            },
-            description: 'Open AutoTyper snippet management options interface',
-          },
-        },
       }
     : {
         manifest_version: 3,
         name: 'AutoTyper Pro - Auto Type Paste & Snippets',
-        version: '1.2.0',
+        version: '1.2.1',
         description: 'Auto-types pasted text and selected snippets into any field with realistic keystrokes, anti-paste bypass, and custom keyboard shortcuts.',
-        permissions: ['storage', 'activeTab', 'scripting', 'contextMenus', 'clipboardRead'],
+        permissions: ['storage', 'activeTab', 'scripting', 'contextMenus', 'clipboardRead', 'offscreen'],
+        icons: iconMap,
         action: {
           default_popup: 'popup.html',
-          default_icon: 'icons/icon128.png',
+          default_icon: iconMap,
         },
         background: {
           service_worker: 'background.js',
@@ -99,34 +82,11 @@ export function generateExtensionFiles(
           page: 'options.html',
           open_in_tab: true,
         },
-        commands: {
-          'auto-type-clipboard': {
-            suggested_key: {
-              default: settings.shortcuts?.autoTypeClipboard || 'Alt+Shift+V',
-              mac: settings.shortcuts?.autoTypeClipboard || 'Alt+Shift+V',
-            },
-            description: 'Auto-type clipboard text into active input field',
-          },
-          'open-snippet-picker': {
-            suggested_key: {
-              default: 'Alt+Shift+K',
-              mac: 'Alt+Shift+K',
-            },
-            description: 'Open in-page snippet quick selector palette',
-          },
-          'open-snippet-manager': {
-            suggested_key: {
-              default: 'Alt+Shift+O',
-              mac: 'Alt+Shift+O',
-            },
-            description: 'Open AutoTyper snippet management options interface',
-          },
-        },
       };
 
   // 2. background.js
   const backgroundJs = `/**
- * AutoTyper Pro - Background Service Worker
+ * AutoTyper Pro - Background Service Worker / Background Page
  * Compatible with Chrome, Firefox, Edge, Brave & Opera
  */
 
@@ -135,7 +95,100 @@ const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
 const INITIAL_SETTINGS = ${JSON.stringify(settings, null, 2)};
 const INITIAL_SNIPPETS = ${JSON.stringify(snippets, null, 2)};
 
-// Initialize default storage on install
+// ---------------------------------------------------------------------------
+// Clipboard reading
+// Chromium service workers have no DOM, so clipboard reads are delegated to a
+// short-lived offscreen document. Firefox uses its background page directly.
+// ---------------------------------------------------------------------------
+async function readClipboardText() {
+  // 1. Direct read works in Firefox background pages and some Chromium builds.
+  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.readText) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) return text;
+    } catch (err) {
+      // Fall through to the offscreen document.
+    }
+  }
+
+  // 2. Chromium offscreen document.
+  if (browserAPI.offscreen && browserAPI.offscreen.createDocument) {
+    try {
+      let hasDocument = false;
+      if (browserAPI.runtime.getContexts) {
+        const contexts = await browserAPI.runtime.getContexts({
+          contextTypes: ['OFFSCREEN_DOCUMENT']
+        });
+        hasDocument = !!(contexts && contexts.length);
+      }
+      if (!hasDocument) {
+        await browserAPI.offscreen.createDocument({
+          url: 'offscreen.html',
+          reasons: ['CLIPBOARD'],
+          justification: 'Read clipboard text so AutoTyper can retype it as keystrokes'
+        });
+      }
+      const response = await browserAPI.runtime.sendMessage({ action: 'OFFSCREEN_READ_CLIPBOARD' });
+      if (response && response.text) return response.text;
+    } catch (err) {
+      console.warn('[AutoTyper Pro] Offscreen clipboard read failed:', err);
+    }
+  }
+
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// Context menus (rebuilt on install and whenever snippets change)
+// ---------------------------------------------------------------------------
+async function registerContextMenus() {
+  try {
+    await browserAPI.contextMenus.removeAll();
+  } catch (err) {
+    // removeAll may reject when no menus exist yet; ignore.
+  }
+
+  try {
+    const data = await browserAPI.storage.local.get(['snippets']);
+    const list = data.snippets || INITIAL_SNIPPETS;
+
+    browserAPI.contextMenus.create({
+      id: 'autotyper_root',
+      title: 'AutoTyper Pro',
+      contexts: ['editable', 'selection']
+    });
+    browserAPI.contextMenus.create({
+      id: 'autotyper_clipboard',
+      parentId: 'autotyper_root',
+      title: 'Auto-Type Clipboard Text',
+      contexts: ['editable']
+    });
+    browserAPI.contextMenus.create({
+      id: 'autotyper_picker',
+      parentId: 'autotyper_root',
+      title: 'Quick Snippet Command Palette...',
+      contexts: ['editable']
+    });
+    browserAPI.contextMenus.create({
+      id: 'autotyper_snippets_menu',
+      parentId: 'autotyper_root',
+      title: 'Top Snippets',
+      contexts: ['editable']
+    });
+
+    list.slice(0, 6).forEach((snippet, index) => {
+      browserAPI.contextMenus.create({
+        id: 'snip_' + snippet.id,
+        parentId: 'autotyper_snippets_menu',
+        title: (index + 1) + '. ' + snippet.title + (snippet.keyboardShortcut ? ' (' + snippet.keyboardShortcut + ')' : ''),
+        contexts: ['editable']
+      });
+    });
+  } catch (err) {
+    console.warn('[AutoTyper Pro] Context menu registration failed:', err);
+  }
+}
+
 browserAPI.runtime.onInstalled.addListener(async () => {
   const data = await browserAPI.storage.local.get(['settings', 'snippets']);
   if (!data.settings) {
@@ -144,53 +197,18 @@ browserAPI.runtime.onInstalled.addListener(async () => {
   if (!data.snippets) {
     await browserAPI.storage.local.set({ snippets: INITIAL_SNIPPETS });
   }
-
-  // Register Context Menus
-  try {
-    browserAPI.contextMenus.removeAll(() => {
-      browserAPI.contextMenus.create({
-        id: 'autotyper_root',
-        title: 'AutoTyper Pro',
-        contexts: ['editable', 'selection']
-      });
-
-      browserAPI.contextMenus.create({
-        id: 'autotyper_clipboard',
-        parentId: 'autotyper_root',
-        title: 'Auto-Type Clipboard Text',
-        contexts: ['editable']
-      });
-
-      browserAPI.contextMenus.create({
-        id: 'autotyper_picker',
-        parentId: 'autotyper_root',
-        title: 'Quick Snippet Command Palette...',
-        contexts: ['editable']
-      });
-
-      browserAPI.contextMenus.create({
-        id: 'autotyper_snippets_menu',
-        parentId: 'autotyper_root',
-        title: 'Top Snippets',
-        contexts: ['editable']
-      });
-
-      const currentSnippets = data.snippets || INITIAL_SNIPPETS;
-      currentSnippets.slice(0, 6).forEach((snippet, index) => {
-        browserAPI.contextMenus.create({
-          id: 'snip_' + snippet.id,
-          parentId: 'autotyper_snippets_menu',
-          title: (index + 1) + '. ' + snippet.title + (snippet.keyboardShortcut ? ' (' + snippet.keyboardShortcut + ')' : ''),
-          contexts: ['editable']
-        });
-      });
-    });
-  } catch (err) {
-    console.warn('Context menu registration:', err);
-  }
+  await registerContextMenus();
 });
 
-// Safe Tab Message Dispatch with Dynamic Script Injection Fallback
+if (browserAPI.storage && browserAPI.storage.onChanged) {
+  browserAPI.storage.onChanged.addListener((changes) => {
+    if (changes.snippets) registerContextMenus();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Message dispatch with dynamic injection fallback
+// ---------------------------------------------------------------------------
 async function safeSendMessage(tabId, message) {
   try {
     await browserAPI.tabs.sendMessage(tabId, message);
@@ -203,7 +221,7 @@ async function safeSendMessage(tabId, message) {
         await browserAPI.tabs.executeScript(tabId, { file: 'content.js', allFrames: true });
         await browserAPI.tabs.insertCSS(tabId, { file: 'content.css', allFrames: true });
       }
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise((resolve) => setTimeout(resolve, 150));
       await browserAPI.tabs.sendMessage(tabId, message);
     } catch (e) {
       console.warn('[AutoTyper Pro] Tab connection failed:', e);
@@ -211,19 +229,22 @@ async function safeSendMessage(tabId, message) {
   }
 }
 
-// Handle Context Menu clicks
+// Context menu clicks
 browserAPI.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab || !tab.id) return;
 
   if (info.menuItemId === 'autotyper_clipboard') {
-    safeSendMessage(tab.id, { action: 'AUTO_TYPE_CLIPBOARD' });
+    const text = await readClipboardText();
+    if (text) {
+      safeSendMessage(tab.id, { action: 'AUTO_TYPE_TEXT', text, title: 'Clipboard Text' });
+    }
   } else if (info.menuItemId === 'autotyper_picker') {
     safeSendMessage(tab.id, { action: 'OPEN_SNIPPET_PICKER' });
   } else if (String(info.menuItemId).startsWith('snip_')) {
     const snipId = String(info.menuItemId).replace('snip_', '');
     const data = await browserAPI.storage.local.get(['snippets']);
     const list = data.snippets || INITIAL_SNIPPETS;
-    const found = list.find(s => s.id === snipId);
+    const found = list.find((s) => s.id === snipId);
     if (found) {
       safeSendMessage(tab.id, {
         action: 'AUTO_TYPE_TEXT',
@@ -234,32 +255,65 @@ browserAPI.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Handle Browser Action Commands & Shortcuts
-browserAPI.commands.onCommand.addListener(async (command) => {
-  const [tab] = await browserAPI.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) return;
-
-  if (command === 'auto-type-clipboard') {
-    safeSendMessage(tab.id, { action: 'AUTO_TYPE_CLIPBOARD' });
-  } else if (command === 'open-snippet-picker') {
-    safeSendMessage(tab.id, { action: 'OPEN_SNIPPET_PICKER' });
-  } else if (command === 'open-snippet-manager') {
-    if (browserAPI.runtime.openOptionsPage) {
-      browserAPI.runtime.openOptionsPage();
-    }
-  }
-});
-
-// Handle Messages from Content/Popup
+// Messages from content scripts and popup/options pages
 browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'OPEN_OPTIONS_PAGE') {
     if (browserAPI.runtime.openOptionsPage) {
       browserAPI.runtime.openOptionsPage();
     }
     sendResponse({ ok: true });
+    return false;
   }
+
+  if (message.action === 'READ_CLIPBOARD') {
+    readClipboardText()
+      .then((text) => sendResponse({ text }))
+      .catch(() => sendResponse({ text: '' }));
+    return true;
+  }
+
+  return false;
 });
 `;
+
+  // 3. offscreen.html / offscreen.js (Chromium clipboard bridge)
+  const offscreenHtml = isFirefox
+    ? ''
+    : `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AutoTyper Pro Clipboard Bridge</title>
+</head>
+<body>
+  <script src="offscreen.js"></script>
+</body>
+</html>
+`;
+
+  const offscreenJs = isFirefox
+    ? ''
+    : `/**
+ * AutoTyper Pro - Offscreen clipboard bridge (Chromium only)
+ * The MV3 service worker has no DOM, so clipboard reads happen here.
+ */
+const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
+
+browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action !== 'OFFSCREEN_READ_CLIPBOARD') return false;
+
+  navigator.clipboard
+    .readText()
+    .then((text) => sendResponse({ text }))
+    .catch((err) => {
+      console.warn('[AutoTyper Pro] Offscreen clipboard read failed:', err);
+      sendResponse({ text: '' });
+    });
+
+  return true;
+});
+`;
+
 
   // 3. content.js
   const contentJs = `/**
@@ -268,6 +322,11 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 
 (() => {
+  // The background script may re-inject this file when a tab was loaded before
+  // the extension. Never register listeners twice.
+  if (window.__autotyperProInjected) return;
+  window.__autotyperProInjected = true;
+
   const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
 
   let currentSettings = ${JSON.stringify(settings)};
@@ -275,6 +334,10 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let activeTyperSession = null;
   let hudElement = null;
   let paletteElement = null;
+  let paletteReturnTarget = null;
+  let paletteSelectedIndex = 0;
+  let paletteResults = [];
+  let audioContext = null;
 
   // Sync settings and snippets from extension storage
   const loadData = async () => {
@@ -316,6 +379,224 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return codeMirrorInput;
     }
     return null;
+  }
+
+  // Focus the target and make sure contenteditable fields have a caret.
+  function focusEditable(el) {
+    try {
+      el.focus({ preventScroll: true });
+    } catch (e) {
+      try { el.focus(); } catch (e2) {}
+    }
+
+    if (el.isContentEditable) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || !sel.anchorNode || !el.contains(sel.anchorNode)) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+    }
+  }
+
+  // Caret-aware insertion used when execCommand is unavailable.
+  function insertTextAtCaret(target, text) {
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+      const start = target.selectionStart ?? target.value.length;
+      const end = target.selectionEnd ?? start;
+      target.value = target.value.slice(0, start) + text + target.value.slice(end);
+      target.selectionStart = target.selectionEnd = start + text.length;
+      target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      return;
+    }
+
+    if (target.isContentEditable) {
+      focusEditable(target);
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const node = text === '\\n'
+          ? document.createElement('br')
+          : document.createTextNode(text);
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.setEndAfter(node);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } else {
+        target.innerText += text;
+      }
+      target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+  }
+
+  // Caret-aware backspace used when execCommand('delete') is unavailable.
+  function deleteCharBeforeCaret(target) {
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+      const start = target.selectionStart ?? target.value.length;
+      if (start > 0) {
+        target.value = target.value.slice(0, start - 1) + target.value.slice(start);
+        target.selectionStart = target.selectionEnd = start - 1;
+        target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      }
+      return;
+    }
+
+    if (target.isContentEditable) {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+
+      const range = sel.getRangeAt(0);
+      if (!range.collapsed) {
+        range.deleteContents();
+      } else {
+        const node = range.startContainer;
+        const offset = range.startOffset;
+        if (node.nodeType === Node.TEXT_NODE && offset > 0) {
+          node.deleteData(offset - 1, 1);
+        } else if (node.childNodes && offset > 0 && node.childNodes[offset - 1]) {
+          node.removeChild(node.childNodes[offset - 1]);
+        } else if (node.previousSibling) {
+          node.parentNode.removeChild(node.previousSibling);
+        }
+      }
+
+      const caret = document.createRange();
+      caret.selectNodeContents(target);
+      caret.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(caret);
+      target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    }
+  }
+
+  // Interpolate dynamic template tags (kept in sync with the web engine).
+  function interpolateTags(text) {
+    const now = new Date();
+    const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+    return text
+      .replace(/\\{\\{date\\}\\}/gi, now.toLocaleDateString())
+      .replace(/\\{\\{time\\}\\}/gi, now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      .replace(/\\{\\{weekday\\}\\}/gi, weekdays[now.getDay()])
+      .replace(/\\{\\{month\\}\\}/gi, months[now.getMonth()])
+      .replace(/\\{\\{year\\}\\}/gi, now.getFullYear().toString())
+      .replace(/\\{\\{timestamp\\}\\}/gi, now.toISOString())
+      .replace(/\\{\\{name\\}\\}/gi, 'Jordan Taylor')
+      .replace(/\\{\\{email\\}\\}/gi, 'jordan.taylor@example.com')
+      .replace(/\\{\\{ticket_id\\}\\}/gi, Math.floor(100000 + Math.random() * 900000).toString());
+  }
+
+  // Per-character delay honoring speedMode/baseDelayMs, jitter and punctuation.
+  function calculateCharacterDelay(char) {
+    let delay;
+
+    if (currentSettings.speedMode === 'steady' || currentSettings.speedMode === 'custom') {
+      delay = Math.max(5, currentSettings.baseDelayMs || 45);
+    } else if (currentSettings.speedMode === 'turbo') {
+      delay = 12;
+    } else {
+      delay = 60000 / (Math.max(10, currentSettings.targetWpm || 75) * 5);
+    }
+
+    if (currentSettings.jitterPercent > 0 && currentSettings.speedMode !== 'turbo') {
+      const factor = (currentSettings.jitterPercent / 100) * 0.7;
+      delay = Math.max(5, delay * (1 + (Math.random() * 2 - 1) * factor));
+    }
+
+    if (['.', '!', '?', ';', '\\n'].includes(char)) {
+      delay += (currentSettings.punctuationPauseMs ?? 120);
+    } else if (char === ' ') {
+      delay += delay * 0.3;
+    }
+
+    return Math.round(delay);
+  }
+
+  function notifyUser(message) {
+    try {
+      const notice = document.createElement('div');
+      notice.textContent = message;
+      notice.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#7f1d1d;color:#ffffff;padding:10px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 10px 25px rgba(0,0,0,.4);max-width:420px;text-align:center;';
+      document.body.appendChild(notice);
+      setTimeout(() => notice.remove(), 3200);
+    } catch (e) {
+      console.warn('[AutoTyper Pro]', message);
+    }
+  }
+
+  function playKeySound(isSpace, isEnter) {
+    const sound = currentSettings.soundFeedback;
+    if (!sound || sound === 'silent') return;
+
+    try {
+      const AudioCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtor) return;
+      if (!audioContext) audioContext = new AudioCtor();
+      if (audioContext.state === 'suspended') audioContext.resume();
+
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const baseFrequency = sound === 'cherry-blue' ? 900 : sound === 'cherry-brown' ? 520 : 720;
+
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(baseFrequency + (Math.random() * 80 - 40), now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(
+        Math.min(0.18, Math.max(0, currentSettings.soundVolume ?? 0.3) * 0.25),
+        now + 0.002
+      );
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + (isEnter ? 0.08 : isSpace ? 0.05 : 0.03));
+
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.09);
+    } catch (e) {
+      // Audio feedback is best-effort only.
+    }
+  }
+
+  // Read the clipboard with progressively weaker fallbacks.
+  async function requestClipboardText() {
+    try {
+      const response = await browserAPI.runtime.sendMessage({ action: 'READ_CLIPBOARD' });
+      if (response && response.text) return response.text;
+    } catch (e) {
+      // Background may be unavailable on restricted pages.
+    }
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) return text;
+      }
+    } catch (e) {
+      // Permission denied or insecure context.
+    }
+
+    // Legacy fallback for browsers that still allow paste into a content script.
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      const ok = document.execCommand('paste');
+      const text = textarea.value;
+      textarea.remove();
+      if (ok && text) return text;
+    } catch (e) {
+      // No clipboard access.
+    }
+
+    return '';
   }
 
   // Robust DOM keycode and code mapping for web editors (Monaco, CodeMirror, etc.)
@@ -457,6 +738,159 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (hudElement) hudElement.style.display = 'none';
   }
 
+  // ---------------------------------------------------------------------------
+  // In-page quick snippet palette
+  // ---------------------------------------------------------------------------
+  function closePalette(restoreFocus) {
+    if (!paletteElement) return;
+    paletteElement.style.display = 'none';
+    if (restoreFocus && paletteReturnTarget && document.contains(paletteReturnTarget)) {
+      focusEditable(paletteReturnTarget);
+    }
+  }
+
+  function selectPaletteSnippet(snippet) {
+    const target = paletteReturnTarget;
+    closePalette(false);
+    if (target && document.contains(target)) {
+      typeSnippet(snippet.content, snippet.title, target);
+    } else {
+      typeSnippet(snippet.content, snippet.title);
+    }
+  }
+
+  function setPaletteSelection(index) {
+    const listEl = paletteElement && paletteElement.querySelector('#at-palette-list');
+    if (!listEl) return;
+    const items = listEl.querySelectorAll('.at-palette-item');
+    if (!items.length) return;
+
+    paletteSelectedIndex = Math.max(0, Math.min(index, items.length - 1));
+    items.forEach((item, i) => {
+      const selected = i === paletteSelectedIndex;
+      item.style.background = selected ? 'rgba(59, 130, 246, 0.18)' : '';
+      item.style.borderColor = selected ? 'rgba(59, 130, 246, 0.55)' : '';
+    });
+    const active = items[paletteSelectedIndex];
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function openSnippetPalette() {
+    if (paletteElement && paletteElement.style.display !== 'none') {
+      const existingInput = paletteElement.querySelector('#at-palette-search');
+      if (existingInput) {
+        existingInput.value = '';
+        existingInput.focus();
+        renderPaletteResults('');
+      }
+      return;
+    }
+
+    // Remember the field the user was editing before the palette steals focus.
+    paletteReturnTarget = getActiveEditable();
+
+    if (paletteElement) {
+      paletteElement.style.display = 'flex';
+      const existingInput = paletteElement.querySelector('#at-palette-search');
+      if (existingInput) {
+        existingInput.value = '';
+        renderPaletteResults('');
+        existingInput.focus();
+      }
+      return;
+    }
+
+    paletteElement = document.createElement('div');
+    paletteElement.id = 'autotyper-palette-overlay';
+    paletteElement.innerHTML = \`
+      <div class="at-palette-modal">
+        <div class="at-palette-header">
+          <input type="text" id="at-palette-search" placeholder="Search snippet by name or tag (↑↓ to select, ↵ to type)..." autocomplete="off" />
+          <button id="at-palette-close">✕</button>
+        </div>
+        <div id="at-palette-list" class="at-palette-list"></div>
+        <div class="at-palette-footer">
+          <span>AutoTyper Pro · <strong>↑↓</strong> navigate · <strong>↵</strong> type · <strong>Esc</strong> close</span>
+        </div>
+      </div>
+    \`;
+    document.body.appendChild(paletteElement);
+
+    const input = paletteElement.querySelector('#at-palette-search');
+    const closeBtn = paletteElement.querySelector('#at-palette-close');
+
+    closeBtn.onclick = () => closePalette(true);
+    paletteElement.onclick = (e) => {
+      if (e.target === paletteElement) closePalette(true);
+    };
+
+    input.oninput = (e) => renderPaletteResults(e.target.value);
+
+    input.onkeydown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePalette(true);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setPaletteSelection(paletteSelectedIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPaletteSelection(paletteSelectedIndex - 1);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const snippet = paletteResults[paletteSelectedIndex];
+        if (snippet) selectPaletteSnippet(snippet);
+      }
+    };
+
+    renderPaletteResults('');
+    input.focus();
+  }
+
+  function renderPaletteResults(query) {
+    const listEl = paletteElement && paletteElement.querySelector('#at-palette-list');
+    if (!listEl) return;
+
+    const q = String(query || '').toLowerCase();
+    paletteResults = currentSnippets.filter((snippet) =>
+      !q ||
+      snippet.title.toLowerCase().includes(q) ||
+      (snippet.tags && snippet.tags.some((tag) => tag.toLowerCase().includes(q))) ||
+      (snippet.shortcutTrigger && snippet.shortcutTrigger.toLowerCase().includes(q))
+    );
+
+    listEl.innerHTML = '';
+    paletteSelectedIndex = 0;
+
+    if (paletteResults.length === 0) {
+      listEl.innerHTML = '<div class="at-palette-empty">No matching snippets found</div>';
+      return;
+    }
+
+    paletteResults.forEach((snippet) => {
+      const item = document.createElement('div');
+      item.className = 'at-palette-item';
+      item.innerHTML = \`
+        <div class="at-palette-item-left">
+          <div class="at-palette-item-title">\${snippet.title}</div>
+          <div class="at-palette-item-tags">\${snippet.tags ? snippet.tags.map((tag) => '#' + tag).join(' ') : ''}</div>
+        </div>
+        <div class="at-palette-item-right">
+          \${snippet.keyboardShortcut ? '<span class="at-palette-badge">' + snippet.keyboardShortcut + '</span>' : ''}
+          <button class="at-palette-type-btn">Type</button>
+        </div>
+      \`;
+
+      item.onclick = () => selectPaletteSnippet(snippet);
+      item.onmouseenter = () => setPaletteSelection(paletteResults.indexOf(snippet));
+      listEl.appendChild(item);
+    });
+
+    setPaletteSelection(0);
+  }
+
   // Common adjacent keys for realistic typo simulation
   const QWERTY_ADJ = {
     a: ['q', 'w', 's', 'z'], b: ['v', 'g', 'h', 'n'], c: ['x', 'd', 'f', 'v'],
@@ -470,231 +904,195 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
   };
 
   // High-fidelity character typist with safe event dispatches and manual mistake override
-  async function typeSnippet(text, title = 'Auto-Typing') {
-    const target = getActiveEditable();
-    if (!target) {
-      console.warn('[AutoTyper Pro] Please click into an editable input or text field first.');
-      return;
-    }
-
-    if (activeTyperSession) {
-      activeTyperSession.cancel();
-    }
-
-    const processedText = interpolateTags(text);
-    let cancelled = false;
-    let manualMistakeRequested = false;
-
-    activeTyperSession = {
-      cancel: () => {
-        cancelled = true;
-        hideHud();
-        activeTyperSession = null;
-      },
-      triggerMistake: () => {
-        manualMistakeRequested = true;
+  async function typeSnippet(text, title = 'Auto-Typing', targetOverride = null) {
+    try {
+      const target = targetOverride || getActiveEditable();
+      if (!target) {
+        console.warn('[AutoTyper Pro] Please click into an editable input or text field first.');
+        return;
       }
-    };
 
-    showHud(title, processedText.length);
+      if (activeTyperSession) {
+        activeTyperSession.cancel();
+      }
 
-    for (let i = 0; i < processedText.length; i++) {
-      if (cancelled) break;
-      const char = processedText[i];
-      const isEnter = char === '\\n';
-      const isSpace = char === ' ';
+      const processedText = interpolateTags(String(text || ''));
+      if (!processedText) return;
 
-      // Check for mistake (Manual button/hotkey, or automatic only if explicitly chosen)
-      const isAutoMistake = currentSettings.mistakeMode === 'automatic' &&
-        !isEnter && !isSpace && (Math.random() * 100 < (currentSettings.typoRatePercent || 2));
+      // Make sure events and execCommand target the intended field.
+      focusEditable(target);
 
-      const shouldMistake = (!isEnter && !isSpace) && (manualMistakeRequested || isAutoMistake);
+      let cancelled = false;
+      let manualMistakeRequested = false;
+      const emitKeyEvents = currentSettings.antiPasteBypass !== false;
 
-      if (shouldMistake) {
-        manualMistakeRequested = false;
-        const lower = char.toLowerCase();
-        const adj = QWERTY_ADJ[lower];
-        if (adj && adj.length > 0) {
-          const picked = adj[Math.floor(Math.random() * adj.length)];
-          const typoChar = char === char.toUpperCase() ? picked.toUpperCase() : picked;
-          const typoSpec = getKeystrokeSpec(typoChar);
-
-          // 1. Insert Typo
-          target.dispatchEvent(new KeyboardEvent('keydown', {
-            key: typoSpec.key, code: typoSpec.code, keyCode: typoSpec.keyCode,
-            which: typoSpec.keyCode, bubbles: true, cancelable: true, composed: true,
-            ctrlKey: false, altKey: false, metaKey: false, shiftKey: typoSpec.shiftKey
-          }));
-
-          try {
-            target.dispatchEvent(new InputEvent('beforeinput', {
-              data: typoChar, inputType: 'insertText', bubbles: true, cancelable: true, composed: true
-            }));
-          } catch(e) {}
-
-          let typoInserted = false;
-          try {
-            typoInserted = document.execCommand('insertText', false, typoChar);
-          } catch (e) {
-            typoInserted = false;
-          }
-
-          if (!typoInserted) {
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-              const start = target.selectionStart ?? target.value.length;
-              target.value = target.value.slice(0, start) + typoChar + target.value.slice(target.selectionEnd ?? start);
-              target.selectionStart = target.selectionEnd = start + 1;
-              target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-            } else if (target.isContentEditable) {
-              target.innerText += typoChar;
-              target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-            }
-          } else {
-            target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-          }
-
-          target.dispatchEvent(new KeyboardEvent('keyup', {
-            key: typoSpec.key, code: typoSpec.code, keyCode: typoSpec.keyCode,
-            which: typoSpec.keyCode, bubbles: true, cancelable: true, composed: true,
-            ctrlKey: false, altKey: false, metaKey: false, shiftKey: typoSpec.shiftKey
-          }));
-
-          // 2. Pause in realization
-          await new Promise(r => setTimeout(r, 140 + Math.random() * 80));
-          if (cancelled) break;
-
-          // 3. Backspace
-          target.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
-            bubbles: true, cancelable: true, composed: true,
-            ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
-          }));
-
-          let bsDeleted = false;
-          try {
-            bsDeleted = document.execCommand('delete', false);
-          } catch (e) {
-            bsDeleted = false;
-          }
-
-          if (!bsDeleted) {
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-              const start = target.selectionStart ?? target.value.length;
-              if (start > 0) {
-                target.value = target.value.slice(0, start - 1) + target.value.slice(start);
-                target.selectionStart = target.selectionEnd = start - 1;
-                target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-              }
-            } else if (target.isContentEditable) {
-              target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-            }
-          } else {
-            target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-          }
-
-          target.dispatchEvent(new KeyboardEvent('keyup', {
-            key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
-            bubbles: true, cancelable: true, composed: true,
-            ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
-          }));
-
-          // 4. Pause before typing correct key
-          await new Promise(r => setTimeout(r, 100 + Math.random() * 60));
-          if (cancelled) break;
+      activeTyperSession = {
+        cancel: () => {
+          cancelled = true;
+          hideHud();
+          activeTyperSession = null;
+        },
+        triggerMistake: () => {
+          if (currentSettings.mistakeMode === 'disabled') return;
+          manualMistakeRequested = true;
         }
-      }
+      };
 
-      const spec = getKeystrokeSpec(char);
+      showHud(title, processedText.length);
 
-      // keydown (STRICTLY ctrlKey: false, altKey: false, metaKey: false)
-      target.dispatchEvent(new KeyboardEvent('keydown', {
-        key: spec.key, code: spec.code, keyCode: spec.keyCode, which: spec.keyCode,
-        bubbles: true, cancelable: true, composed: true,
-        ctrlKey: false, altKey: false, metaKey: false,
-        shiftKey: spec.shiftKey
-      }));
+      for (let i = 0; i < processedText.length; i++) {
+        if (cancelled) break;
 
-      // keypress
-      target.dispatchEvent(new KeyboardEvent('keypress', {
-        key: spec.key, code: spec.code, keyCode: spec.keyCode, which: spec.keyCode,
-        bubbles: true, cancelable: true, composed: true,
-        ctrlKey: false, altKey: false, metaKey: false,
-        shiftKey: spec.shiftKey,
-        charCode: spec.charCode
-      }));
+        const char = processedText[i];
+        const isEnter = char === '\\n';
+        const isSpace = char === ' ';
 
-      // beforeinput
-      try {
-        target.dispatchEvent(new InputEvent('beforeinput', {
-          data: isEnter ? null : char,
-          inputType: isEnter ? 'insertLineBreak' : 'insertText',
-          bubbles: true, cancelable: true, composed: true
-        }));
-      } catch (e) {}
+        // Check for mistake (manual button/hotkey, or automatic only if chosen)
+        const isAutoMistake = currentSettings.mistakeMode === 'automatic' &&
+          !isEnter && !isSpace && (Math.random() * 100 < (currentSettings.typoRatePercent || 2));
 
-      // insert character (native execCommand first for Monaco/CodeMirror compatibility)
-      let inserted = false;
-      try {
-        inserted = document.execCommand('insertText', false, isEnter ? '\\n' : char);
-      } catch (e) {
-        inserted = false;
-      }
+        const shouldMistake = (!isEnter && !isSpace) && (manualMistakeRequested || isAutoMistake);
 
-      if (!inserted) {
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-          const start = target.selectionStart ?? target.value.length;
-          const end = target.selectionEnd ?? target.value.length;
-          const val = target.value;
-          target.value = val.slice(0, start) + char + val.slice(end);
-          target.selectionStart = target.selectionEnd = start + char.length;
-          target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-        } else if (target.isContentEditable) {
-          const selection = window.getSelection();
-          if (selection && selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            range.deleteContents();
-            const textNode = document.createTextNode(isEnter ? '\\n' : char);
-            range.insertNode(textNode);
-            range.setStartAfter(textNode);
-            range.setEndAfter(textNode);
-            selection.removeAllRanges();
-            selection.addRange(range);
-          } else {
-            target.innerText += char;
+        if (shouldMistake) {
+          manualMistakeRequested = false;
+          const lower = char.toLowerCase();
+          const adj = QWERTY_ADJ[lower];
+          if (adj && adj.length > 0) {
+            const picked = adj[Math.floor(Math.random() * adj.length)];
+            const typoChar = char === char.toUpperCase() ? picked.toUpperCase() : picked;
+            const typoSpec = getKeystrokeSpec(typoChar);
+
+            // 1. Insert typo
+            if (emitKeyEvents) {
+              target.dispatchEvent(new KeyboardEvent('keydown', {
+                key: typoSpec.key, code: typoSpec.code, keyCode: typoSpec.keyCode,
+                which: typoSpec.keyCode, bubbles: true, cancelable: true, composed: true,
+                ctrlKey: false, altKey: false, metaKey: false, shiftKey: typoSpec.shiftKey
+              }));
+            }
+
+            try {
+              target.dispatchEvent(new InputEvent('beforeinput', {
+                data: typoChar, inputType: 'insertText', bubbles: true, cancelable: true, composed: true
+              }));
+            } catch (e) {}
+
+            let typoInserted = false;
+            try {
+              typoInserted = document.execCommand('insertText', false, typoChar);
+            } catch (e) {
+              typoInserted = false;
+            }
+            if (!typoInserted) insertTextAtCaret(target, typoChar);
+
+            if (emitKeyEvents) {
+              target.dispatchEvent(new KeyboardEvent('keyup', {
+                key: typoSpec.key, code: typoSpec.code, keyCode: typoSpec.keyCode,
+                which: typoSpec.keyCode, bubbles: true, cancelable: true, composed: true,
+                ctrlKey: false, altKey: false, metaKey: false, shiftKey: typoSpec.shiftKey
+              }));
+            }
+            playKeySound(false, false);
+
+            // 2. Pause in realization
+            await new Promise((resolve) => setTimeout(resolve, 140 + Math.random() * 80));
+            if (cancelled) break;
+
+            // 3. Backspace
+            if (emitKeyEvents) {
+              target.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
+                bubbles: true, cancelable: true, composed: true,
+                ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
+              }));
+            }
+
+            let bsDeleted = false;
+            try {
+              bsDeleted = document.execCommand('delete', false);
+            } catch (e) {
+              bsDeleted = false;
+            }
+            if (!bsDeleted) deleteCharBeforeCaret(target);
+
+            if (emitKeyEvents) {
+              target.dispatchEvent(new KeyboardEvent('keyup', {
+                key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
+                bubbles: true, cancelable: true, composed: true,
+                ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
+              }));
+            }
+
+            // 4. Pause before typing the correct key
+            await new Promise((resolve) => setTimeout(resolve, 100 + Math.random() * 60));
+            if (cancelled) break;
           }
-          target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
         }
-      } else {
-        target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+
+        const spec = getKeystrokeSpec(char);
+
+        if (emitKeyEvents) {
+          // keydown (STRICTLY ctrlKey: false, altKey: false, metaKey: false)
+          target.dispatchEvent(new KeyboardEvent('keydown', {
+            key: spec.key, code: spec.code, keyCode: spec.keyCode, which: spec.keyCode,
+            bubbles: true, cancelable: true, composed: true,
+            ctrlKey: false, altKey: false, metaKey: false,
+            shiftKey: spec.shiftKey
+          }));
+
+          // keypress
+          target.dispatchEvent(new KeyboardEvent('keypress', {
+            key: spec.key, code: spec.code, keyCode: spec.keyCode, which: spec.keyCode,
+            bubbles: true, cancelable: true, composed: true,
+            ctrlKey: false, altKey: false, metaKey: false,
+            shiftKey: spec.shiftKey,
+            charCode: spec.charCode
+          }));
+        }
+
+        // beforeinput
+        try {
+          target.dispatchEvent(new InputEvent('beforeinput', {
+            data: isEnter ? null : char,
+            inputType: isEnter ? 'insertLineBreak' : 'insertText',
+            bubbles: true, cancelable: true, composed: true
+          }));
+        } catch (e) {}
+
+        // Insert character (native execCommand first for Monaco/CodeMirror compatibility)
+        let inserted = false;
+        try {
+          inserted = document.execCommand('insertText', false, isEnter ? '\\n' : char);
+        } catch (e) {
+          inserted = false;
+        }
+        if (!inserted) {
+          insertTextAtCaret(target, isEnter ? '\\n' : char);
+        }
+
+        if (emitKeyEvents) {
+          // keyup
+          target.dispatchEvent(new KeyboardEvent('keyup', {
+            key: spec.key, code: spec.code, keyCode: spec.keyCode, which: spec.keyCode,
+            bubbles: true, cancelable: true, composed: true,
+            ctrlKey: false, altKey: false, metaKey: false,
+            shiftKey: spec.shiftKey
+          }));
+        }
+
+        playKeySound(isSpace, isEnter);
+        updateHudProgress(i + 1, processedText.length);
+
+        await new Promise((resolve) => setTimeout(resolve, calculateCharacterDelay(char)));
       }
 
-      // keyup
-      target.dispatchEvent(new KeyboardEvent('keyup', {
-        key: spec.key, code: spec.code, keyCode: spec.keyCode, which: spec.keyCode,
-        bubbles: true, cancelable: true, composed: true,
-        ctrlKey: false, altKey: false, metaKey: false,
-        shiftKey: spec.shiftKey
-      }));
-
-      updateHudProgress(i + 1, processedText.length);
-
-      // Delay calculation
-      let delay = 60000 / (Math.max(15, currentSettings.targetWpm || 75) * 5);
-      if (currentSettings.jitterPercent > 0) {
-        const factor = (currentSettings.jitterPercent / 100) * 0.7;
-        delay = Math.max(10, delay * (1 + (Math.random() * 2 - 1) * factor));
-      }
-      if (['.', '!', '?', ';', '\\n'].includes(char)) {
-        delay += (currentSettings.punctuationPauseMs || 120);
-      } else if (char === ' ') {
-        delay += delay * 0.3;
-      }
-
-      await new Promise(r => setTimeout(r, Math.round(delay)));
+      hideHud();
+      activeTyperSession = null;
+    } catch (err) {
+      console.error('[AutoTyper Pro] Typing failed:', err);
+      hideHud();
+      activeTyperSession = null;
     }
-
-    hideHud();
-    activeTyperSession = null;
   }
 
   // Intercept Paste when setting is enabled
@@ -736,7 +1134,7 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     }
 
-    // 3. Open Snippet Command Palette Shortcut (e.g. Alt+K or Alt+Shift+K)
+    // 3. Open Snippet Command Palette Shortcut (default Alt+K)
     if (matchesShortcut(e, shortcuts.openSnippetPicker || 'Alt+K')) {
       e.preventDefault();
       openSnippetPalette();
@@ -753,12 +1151,13 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // 4. Auto-Type Clipboard Shortcut (e.g. Alt+Shift+V)
     if (matchesShortcut(e, shortcuts.autoTypeClipboard || 'Alt+Shift+V')) {
       e.preventDefault();
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) typeSnippet(text, 'Clipboard Text');
-      } catch (err) {
-        console.warn('Clipboard read failed:', err);
-      }
+      requestClipboardText().then((text) => {
+        if (text) {
+          typeSnippet(text, 'Clipboard Text');
+        } else {
+          notifyUser('Clipboard access was denied. Try the toolbar popup, or grant clipboard permission.');
+        }
+      });
       return;
     }
 
@@ -795,16 +1194,17 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }, true);
 
   // Message listener from popup/background
-  browserAPI.runtime.onMessage.addListener(async (message) => {
+  browserAPI.runtime.onMessage.addListener((message) => {
     if (message.action === 'AUTO_TYPE_TEXT') {
       typeSnippet(message.text, message.title);
     } else if (message.action === 'AUTO_TYPE_CLIPBOARD') {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) typeSnippet(text, 'Clipboard Text');
-      } catch (err) {
-        console.warn('Clipboard read failed:', err);
-      }
+      requestClipboardText().then((text) => {
+        if (text) {
+          typeSnippet(text, 'Clipboard Text');
+        } else {
+          notifyUser('Clipboard access was denied. Open the toolbar popup and try again.');
+        }
+      });
     } else if (message.action === 'OPEN_SNIPPET_PICKER') {
       openSnippetPalette();
     } else if (message.action === 'STOP_TYPING') {
@@ -1330,7 +1730,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderSnippets(filtered);
   });
 
-  clipboardBtn.addEventListener('click', () => {
+  clipboardBtn.addEventListener('click', async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          sendToActiveTab({ action: 'AUTO_TYPE_TEXT', text, title: 'Clipboard Text' });
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[AutoTyper Pro] Popup clipboard read failed:', err);
+    }
+    // Fall back to the background/content-script clipboard path.
     sendToActiveTab({ action: 'AUTO_TYPE_CLIPBOARD' });
   });
 
@@ -1653,6 +2065,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
 
     <div class="form-group" style="margin-top: 14px;">
+      <label>Typing Speed Mode</label>
+      <select id="speedMode">
+        <option value="human">Human (WPM-based with jitter)</option>
+        <option value="steady">Steady (fixed base delay)</option>
+        <option value="turbo">Turbo (fastest)</option>
+        <option value="custom">Custom (fixed delay + jitter)</option>
+      </select>
+      <span class="hint">Steady and Custom use the base delay below. Turbo ignores jitter.</span>
+    </div>
+
+    <div class="form-group">
+      <label>Base Delay per Character: <span id="baseDelay-display" class="badge-val">45 ms</span></label>
+      <div class="slider-row">
+        <input type="range" id="baseDelayMs" min="5" max="250" value="45">
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-top: 14px;">
       <label>Mistake &amp; Typo Mode</label>
       <div style="display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap;">
         <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; background: #1e293b; padding: 8px 12px; border-radius: 6px; cursor: pointer; border: 1px solid #334155; font-size: 12px;">
@@ -1676,6 +2106,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       <label for="autoTypeOnPaste" style="font-weight: normal; cursor: pointer;">
         Intercept Ctrl+V / Paste events and auto-type clipboard text instead
       </label>
+    </div>
+
+    <div class="form-group" style="margin-top: 12px; display: flex; flex-direction: row; gap: 12px; align-items: center;">
+      <input type="checkbox" id="antiPasteBypass">
+      <label for="antiPasteBypass" style="font-weight: normal; cursor: pointer;">
+        Anti-paste bypass: emit realistic keyboard events (disable to insert text without key events)
+      </label>
+    </div>
+
+    <div class="form-group" style="margin-top: 14px;">
+      <label>Keyboard Sound Feedback</label>
+      <select id="soundFeedback">
+        <option value="silent">Silent</option>
+        <option value="cherry-blue">Cherry Blue (clicky)</option>
+        <option value="cherry-brown">Cherry Brown (tactile)</option>
+        <option value="cherry-red">Cherry Red (linear)</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Sound Volume: <span id="soundVolume-display" class="badge-val">30%</span></label>
+      <div class="slider-row">
+        <input type="range" id="soundVolume" min="0" max="100" value="30">
+      </div>
     </div>
   </div>
 
@@ -1759,7 +2213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     btn.onclick = () => {
       btn.classList.add('listening');
-      btn.querySelector('.sc-val').textContent = 'Press key combination...';
+      btn.querySelector('.sc-val').textContent = 'Press key combination (Backspace to clear)...';
 
       const onKeyDown = async (e) => {
         e.preventDefault();
@@ -1772,7 +2226,24 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          settings.shortcuts[settingsKey] = '';
+          await browserAPI.storage.local.set({ settings });
+          btn.classList.remove('listening');
+          btn.querySelector('.sc-val').textContent = 'None';
+          window.removeEventListener('keydown', onKeyDown, true);
+          return;
+        }
+
         if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+
+        const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
+        const isFunctionKey = /^F([1-9]|1[0-2])$/.test(e.key);
+        const isSpecialKey = e.key === 'Tab' || e.key === 'Enter';
+        if (!hasModifier && !isFunctionKey && !isSpecialKey) {
+          btn.querySelector('.sc-val').textContent = 'Add Ctrl / Alt / Meta (or use an F-key)';
+          return;
+        }
 
         const parts = [];
         if (e.ctrlKey) parts.push('Ctrl');
@@ -1804,12 +2275,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupShortcutRecorder('sc-stop', 'stopTyping');
   setupShortcutRecorder('sc-mistake', 'triggerMistake');
 
-  // --- SPEED & MISTAKE CONTROLS ---
+  // --- SPEED, SOUND & MISTAKE CONTROLS ---
   const wpmInput = document.getElementById('targetWpm');
   const wpmDisplay = document.getElementById('wpm-display');
   const jitterInput = document.getElementById('jitterPercent');
   const jitterDisplay = document.getElementById('jitter-display');
   const autoTypeOnPaste = document.getElementById('autoTypeOnPaste');
+  const antiPasteBypass = document.getElementById('antiPasteBypass');
+  const speedModeSelect = document.getElementById('speedMode');
+  const baseDelayInput = document.getElementById('baseDelayMs');
+  const baseDelayDisplay = document.getElementById('baseDelay-display');
+  const soundSelect = document.getElementById('soundFeedback');
+  const soundVolumeInput = document.getElementById('soundVolume');
+  const soundVolumeDisplay = document.getElementById('soundVolume-display');
+
+  const saveSettings = () => browserAPI.storage.local.set({ settings });
 
   const mistakeRadios = document.querySelectorAll('input[name="mistakeMode"]');
   const curMistakeMode = settings.mistakeMode || 'manual';
@@ -1818,33 +2298,81 @@ document.addEventListener('DOMContentLoaded', async () => {
     radio.onchange = async () => {
       settings.mistakeMode = radio.value;
       settings.typoSimulation = radio.value === 'automatic';
-      await browserAPI.storage.local.set({ settings });
+      await saveSettings();
     };
   });
 
-  if (settings.targetWpm) wpmInput.value = settings.targetWpm;
-  if (settings.jitterPercent !== undefined) jitterInput.value = settings.jitterPercent;
-  autoTypeOnPaste.checked = !!settings.autoTypeOnPaste;
+  if (wpmInput) {
+    if (settings.targetWpm) wpmInput.value = settings.targetWpm;
+    if (wpmDisplay) wpmDisplay.textContent = wpmInput.value + ' WPM';
+    wpmInput.oninput = async () => {
+      if (wpmDisplay) wpmDisplay.textContent = wpmInput.value + ' WPM';
+      settings.targetWpm = parseInt(wpmInput.value, 10);
+      await saveSettings();
+    };
+  }
 
-  wpmDisplay.textContent = wpmInput.value + ' WPM';
-  jitterDisplay.textContent = jitterInput.value + '%';
+  if (jitterInput) {
+    if (settings.jitterPercent !== undefined) jitterInput.value = settings.jitterPercent;
+    if (jitterDisplay) jitterDisplay.textContent = jitterInput.value + '%';
+    jitterInput.oninput = async () => {
+      if (jitterDisplay) jitterDisplay.textContent = jitterInput.value + '%';
+      settings.jitterPercent = parseInt(jitterInput.value, 10);
+      await saveSettings();
+    };
+  }
 
-  wpmInput.oninput = async () => {
-    wpmDisplay.textContent = wpmInput.value + ' WPM';
-    settings.targetWpm = parseInt(wpmInput.value, 10);
-    await browserAPI.storage.local.set({ settings });
-  };
+  if (speedModeSelect) {
+    speedModeSelect.value = settings.speedMode || 'human';
+    speedModeSelect.onchange = async () => {
+      settings.speedMode = speedModeSelect.value;
+      await saveSettings();
+    };
+  }
 
-  jitterInput.oninput = async () => {
-    jitterDisplay.textContent = jitterInput.value + '%';
-    settings.jitterPercent = parseInt(jitterInput.value, 10);
-    await browserAPI.storage.local.set({ settings });
-  };
+  if (baseDelayInput) {
+    baseDelayInput.value = settings.baseDelayMs || 45;
+    if (baseDelayDisplay) baseDelayDisplay.textContent = baseDelayInput.value + ' ms';
+    baseDelayInput.oninput = async () => {
+      if (baseDelayDisplay) baseDelayDisplay.textContent = baseDelayInput.value + ' ms';
+      settings.baseDelayMs = parseInt(baseDelayInput.value, 10);
+      await saveSettings();
+    };
+  }
 
-  autoTypeOnPaste.onchange = async () => {
-    settings.autoTypeOnPaste = autoTypeOnPaste.checked;
-    await browserAPI.storage.local.set({ settings });
-  };
+  if (autoTypeOnPaste) {
+    autoTypeOnPaste.checked = !!settings.autoTypeOnPaste;
+    autoTypeOnPaste.onchange = async () => {
+      settings.autoTypeOnPaste = autoTypeOnPaste.checked;
+      await saveSettings();
+    };
+  }
+
+  if (antiPasteBypass) {
+    antiPasteBypass.checked = settings.antiPasteBypass !== false;
+    antiPasteBypass.onchange = async () => {
+      settings.antiPasteBypass = antiPasteBypass.checked;
+      await saveSettings();
+    };
+  }
+
+  if (soundSelect) {
+    soundSelect.value = settings.soundFeedback || 'silent';
+    soundSelect.onchange = async () => {
+      settings.soundFeedback = soundSelect.value;
+      await saveSettings();
+    };
+  }
+
+  if (soundVolumeInput) {
+    soundVolumeInput.value = Math.round((settings.soundVolume ?? 0.3) * 100);
+    if (soundVolumeDisplay) soundVolumeDisplay.textContent = soundVolumeInput.value + '%';
+    soundVolumeInput.oninput = async () => {
+      if (soundVolumeDisplay) soundVolumeDisplay.textContent = soundVolumeInput.value + '%';
+      settings.soundVolume = parseInt(soundVolumeInput.value, 10) / 100;
+      await saveSettings();
+    };
+  }
 
   // --- SNIPPET MANAGEMENT ---
   const searchInput = document.getElementById('search-snips');
@@ -1966,7 +2494,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   mScBtn.onclick = () => {
     mScBtn.classList.add('listening');
-    mScVal.textContent = 'Press keys (e.g. Alt+1)...';
+    mScVal.textContent = 'Press keys (e.g. Alt+1) or Backspace to clear...';
 
     const onKey = (e) => {
       e.preventDefault();
@@ -1978,7 +2506,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.removeEventListener('keydown', onKey, true);
         return;
       }
+
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        recordedShortcut = undefined;
+        mScVal.textContent = 'None (Click to record combo)';
+        mScBtn.classList.remove('listening');
+        window.removeEventListener('keydown', onKey, true);
+        return;
+      }
       if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+
+      const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
+      const isFunctionKey = /^F([1-9]|1[0-2])$/.test(e.key);
+      const isSpecialKey = e.key === 'Tab' || e.key === 'Enter';
+      if (!hasModifier && !isFunctionKey && !isSpecialKey) {
+        mScVal.textContent = 'Add Ctrl / Alt / Meta (or use an F-key)';
+        return;
+      }
 
       const parts = [];
       if (e.ctrlKey) parts.push('Ctrl');
@@ -2088,7 +2632,7 @@ Auto-types pasted text and selected snippets into any field with realistic keyst
 ## Features
 - **Custom Keyboard Shortcuts**:
   - Global activation shortcut to auto-type clipboard (default \`Alt+Shift+V\`).
-  - In-Page Quick Snippet Command Palette (default \`Alt+K\` or \`Alt+Shift+K\`).
+  - In-Page Quick Snippet Command Palette (default \`Alt+K\`).
   - Snippet Manager shortcut (default \`Alt+Shift+O\`).
   - Per-snippet keybindings (assign combinations like \`Alt+1\`, \`Ctrl+Alt+S\` to specific snippets).
 - **Snippet Management System**:
@@ -2119,20 +2663,20 @@ Auto-types pasted text and selected snippets into any field with realistic keyst
 5. The extension is now loaded and ready!
 `;
 
-  return [
+  const files: GeneratedExtensionFile[] = [
     {
       name: 'manifest.json',
       path: 'manifest.json',
       language: 'json',
       content: JSON.stringify(manifest, null, 2),
-      description: isFirefox ? 'Firefox Manifest V3 configuration with command shortcuts' : 'Chromium Manifest V3 configuration with command shortcuts',
+      description: isFirefox ? 'Firefox Manifest V3 configuration' : 'Chromium Manifest V3 configuration with offscreen clipboard support',
     },
     {
       name: 'background.js',
       path: 'background.js',
       language: 'javascript',
       content: backgroundJs,
-      description: 'Background service worker for shortcuts, context menus, and command routing',
+      description: 'Background worker/page for clipboard access, context menus, and command routing',
     },
     {
       name: 'content.js',
@@ -2176,12 +2720,20 @@ Auto-types pasted text and selected snippets into any field with realistic keyst
       content: optionsJs,
       description: 'Options page controller with interactive shortcut recorder and snippet CRUD',
     },
+    ...ICON_SIZES.map((size) => ({
+      name: `icon${size}.png`,
+      path: `icons/icon${size}.png`,
+      language: 'png' as const,
+      content: ICON_PNG_BASE64[size],
+      encoding: 'base64' as const,
+      description: `${size}x${size} PNG toolbar/store icon`,
+    })),
     {
       name: 'icon.svg',
       path: 'icons/icon.svg',
       language: 'xml',
       content: iconSvg,
-      description: 'Scalable vector icon for extension toolbar and store badges',
+      description: 'Scalable vector source icon for store badges and documentation',
     },
     {
       name: 'README.md',
@@ -2191,6 +2743,27 @@ Auto-types pasted text and selected snippets into any field with realistic keyst
       description: 'Detailed instructions for loading unpacked extension in Chrome and Firefox',
     },
   ];
+
+  if (!isFirefox) {
+    files.push(
+      {
+        name: 'offscreen.html',
+        path: 'offscreen.html',
+        language: 'html',
+        content: offscreenHtml,
+        description: 'Hidden offscreen document used for clipboard access in Manifest V3',
+      },
+      {
+        name: 'offscreen.js',
+        path: 'offscreen.js',
+        language: 'javascript',
+        content: offscreenJs,
+        description: 'Offscreen clipboard bridge for the Chromium service worker',
+      }
+    );
+  }
+
+  return files;
 }
 
 export async function createExtensionZip(
@@ -2202,8 +2775,8 @@ export async function createExtensionZip(
   const files = generateExtensionFiles(snippets, settings, targetBrowser);
 
   for (const file of files) {
-    if (file.path.startsWith('icons/')) {
-      zip.folder('icons')?.file('icon.svg', file.content);
+    if (file.encoding === 'base64') {
+      zip.file(file.path, file.content, { base64: true });
     } else {
       zip.file(file.path, file.content);
     }
