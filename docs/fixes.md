@@ -29,15 +29,11 @@ This document records every issue found in the audit and the fix applied. Items 
 - **Binary pipeline:** `GeneratedExtensionFile` gained an optional `encoding: 'utf8' | 'base64'` field. The build script decodes base64 before writing, and the ZIP export passes `{ base64: true }` to JSZip. The code viewer shows a placeholder for binary assets instead of dumping base64.
 - **Build guard:** The build script validates that every file referenced by the manifest actually exists in the generated package and fails the build otherwise.
 
-### P0-4. Cascading indentation blowout and auto-closing bracket collision in Code Editors
+### P0-4. Cascading indentation blowout in Code Editors
 
 - **Files:** `src/utils/autoTyperEngine.ts`, `src/utils/extensionGenerator.ts` (`contentJs`)
-- **Visual Reference:** `screenshots/malformedOnTyping.png`
-- **Problem:** When typing multiline code into web code editors (Monaco Editor, CodeMirror 5/6, Ace Editor, or IDE textareas), inserting a newline character causes the editor's auto-indentation rule (`TypeWithAutoIndentCommand` / `newlineAndIndent`) to automatically insert leading spaces/tabs on the new line. AutoTyper then typed the snippet's leading whitespace on top of the editor's auto-indent, causing each consecutive line to shift further right in a cascading triangular blowout (+4, +8, +12, +16 spaces). Additionally, when typing opening delimiters (`{`, `(`, `[`, `"`, `'`), code editors automatically inserted matching closing delimiters, which collided with the snippet's closing characters and created duplicate tokens (e.g. `}}` or `""`).
-- **Fix:**
-  - Added **Smart Indentation Reconciliation** (`getActiveLineLeadingIndent`): After typing `\n`, the engine detects the indentation already provided by the editor. If the snippet's next line starts with identical indentation, the engine skips typing those duplicate whitespace characters. If the editor indented further than the snippet requires (e.g. at a closing brace or unindented line), the engine automatically backspaces the excess indentation back to the target column.
-  - Added **Auto-Closing Bracket Collision Prevention** (`isNextCharInEditor`, `stepOverChar`): When encountering a closing character that the editor has already auto-inserted directly after the caret, the engine steps over it (`ArrowRight` or caret advance) instead of typing a duplicate character.
-  - Implemented with full Dual-Engine Parity across both the web simulator and the extension content script.
+- **Problem:** When typing multiline code into web code editors (Monaco Editor, CodeMirror 5/6, Ace Editor, or IDE textareas), inserting a newline character causes the editor's auto-indentation rule (`TypeWithAutoIndentCommand` / `newlineAndIndent`) to automatically insert leading spaces/tabs on the new line. AutoTyper then typed the snippet's leading whitespace on top of the editor's auto-indent, causing each consecutive line to shift further right in a cascading triangular blowout (+4, +8, +12, +16 spaces).
+- **Fix:** Added **Smart Indentation Reconciliation** (`getActiveLineLeadingIndent`): After typing `\n`, the engine detects the indentation already provided by the editor. If the snippet's next line starts with identical indentation, the engine skips typing those duplicate whitespace characters.
 
 ### P0-5. Background timer throttling and focus loss desynchronization on tab/window blur
 
@@ -58,6 +54,22 @@ This document records every issue found in the audit and the fix applied. Items 
   - Added **Direct In-Page Speed Controls**: Embedded real-time speed steppers (`[-] WPM [+]`) and a one-click `⚡ Turbo` toggle directly on the floating HUD in both the browser extension content script and the web simulator. Speed changes immediately take effect on the very next keystroke calculation.
   - Added **On-Page Speed Shortcuts**: Bound `Alt+[` to decrease speed by 10 WPM and `Alt+]` to increase speed by 10 WPM live on any active web page without needing to touch the mouse.
   - Added **Interactive Pause & Break Mode**: Prominent Pause / Play button with clear visual states (`⏸ Pause` vs pulsing emerald `▶ Resume`), display of paused break status, and `Alt+P` keyboard shortcut to freeze and resume at any moment. Excludes pause break duration from WPM metrics.
+
+### P0-7. Destructive backspacing and active line detection errors in Code Editors
+
+- **Files:** `src/utils/autoTyperEngine.ts`, `src/utils/extensionGenerator.ts` (`contentJs`)
+- **Visual Reference:** `screenshots/normal.png`, `screenshots/errorBegins.png`, `screenshots/lotsOfErrors.png`, `screenshots/actualsnippet.txt`
+- **Problem:**
+  - In `errorBegins.png`, typing `struct Rectangle {\n    int w,h;\n};` resulted in `int};` on line 8 because whenever a snippet line had less indentation than the editor's auto-indentation (e.g. at closing braces `};` or unindented lines), the engine calculated an `excess` and sent `KeyboardEvent('keydown', Backspace)` + `document.execCommand('delete')`.
+  - Sending Backspaces across lines deleted the newline character, backspaced into the previous line, and erased code backwards (deleting `\n`, `;`, `h`, `,`, `w`, `' '` back to `int`), then typed `};` right after `int` on line 8 (`errorBegins.png`).
+  - In subsequent lines (`lotsOfErrors.png`), repeated backspaces erased previous lines (`{`, `int w,h;\n};`, `cin >> rects[i].w >> ...`), merging lines together into a malformed mess.
+  - In `getActiveLineLeadingIndent`, `el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement` ran before Monaco/CodeMirror checks. In Monaco, `el` is `<textarea class="inputarea">`, so it read Monaco's internal IME buffer instead of the actual editor line.
+  - `isNextCharInEditor` and `stepOverChar` also queried Monaco's internal textarea instead of the editor model, causing characters from the snippet to be dropped and leaving duplicate closing braces.
+- **Fix:**
+  - Removed all destructive Backspace logic on Enter: AutoTyper NEVER sends Backspaces to "unindent" after a newline. Code editors naturally de-indent closing braces (like `}`) via electric indentation without eating previous lines.
+  - Prioritized Monaco Editor (`.monaco-editor`), CodeMirror 6 (`.cm-editor`), CodeMirror 5 (`.CodeMirror`), and Ace Editor (`.ace_editor`) detection before generic HTML textarea checks.
+  - Used bounding client rectangle geometry matching (`cursorRect.top` within `vlRect` vertical bounds) to accurately identify the active line in Monaco and CodeMirror.
+  - Removed `isNextCharInEditor` / `stepOverChar` character skipping, allowing modern code editors' native `autoClosingOvertype` to handle closing delimiters faithfully.
 
 ---
 
@@ -241,9 +253,10 @@ This document records every issue found in the audit and the fix applied. Items 
 - [x] P0-1 missing `interpolateTags`
 - [x] P0-2 missing snippet palette + focus restore
 - [x] P0-3 PNG icons + binary pipeline + manifest guard
-- [x] P0-4 smart code indentation reconciliation & bracket collision fix
+- [x] P0-4 smart code indentation reconciliation
 - [x] P0-5 background timer throttle & tab focus loss auto-pause / refocus
 - [x] P0-6 on-page typing break (pause/play) and live speed controller
+- [x] P0-7 destructive backspacing and active line detection errors fix
 - [x] P1-1 export browser selection
 - [x] P1-2 clipboard via extension context/offscreen
 - [x] P1-3 Type actions start typing

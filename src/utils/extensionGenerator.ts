@@ -1008,31 +1008,29 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
   function getActiveLineLeadingIndent(el) {
     if (!el) return '';
 
-    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-      const pos = el.selectionStart ?? el.value.length;
-      const textBefore = el.value.slice(0, pos);
-      const lastLine = textBefore.split('\\n').pop() || '';
-      const match = lastLine.match(/^[ \\t]*/);
-      return match ? match[0] : '';
-    }
-
+    // 1. Monaco Editor (.monaco-editor) - MUST check before textarea because Monaco's active element is textarea.inputarea!
     const monacoContainer = el.closest ? el.closest('.monaco-editor') : null;
     if (monacoContainer) {
       try {
         const cursor = monacoContainer.querySelector('.cursors-layer .cursor');
-        const cursorTop = cursor ? cursor.style.top : null;
-        const viewLines = monacoContainer.querySelectorAll('.view-lines .view-line');
-        for (let i = 0; i < viewLines.length; i++) {
-          const vl = viewLines[i];
-          if (!cursorTop || vl.style.top === cursorTop) {
-            const text = (vl.textContent || '').replace(/\\u00a0/g, ' ');
-            const match = text.match(/^[ \\t]*/);
-            return match ? match[0] : '';
+        if (cursor) {
+          const cursorRect = cursor.getBoundingClientRect();
+          const viewLines = monacoContainer.querySelectorAll('.view-lines .view-line');
+          for (let i = 0; i < viewLines.length; i++) {
+            const vl = viewLines[i];
+            const vlRect = vl.getBoundingClientRect();
+            if (cursorRect.top >= vlRect.top - 2 && cursorRect.top <= vlRect.bottom + 2) {
+              const text = (vl.textContent || '').replace(/\\u00a0/g, ' ');
+              const match = text.match(/^[ \\t]*/);
+              return match ? match[0] : '';
+            }
           }
         }
       } catch (e) {}
+      return '';
     }
 
+    // 2. CodeMirror 6 (.cm-editor) - MUST check before textarea
     const cmEditor = el.closest ? el.closest('.cm-editor') : null;
     if (cmEditor) {
       try {
@@ -1043,21 +1041,55 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return match ? match[0] : '';
         }
       } catch (e) {}
+      return '';
     }
 
+    // 3. CodeMirror 5 (.CodeMirror) - MUST check before textarea
     const cm5 = el.closest ? el.closest('.CodeMirror') : null;
     if (cm5) {
       try {
-        const lines = cm5.querySelectorAll('.CodeMirror-line');
-        if (lines.length > 0) {
-          const lastLine = lines[lines.length - 1];
-          const text = (lastLine.textContent || '').replace(/\\u00a0/g, ' ');
+        const cursor = cm5.querySelector('.CodeMirror-cursor');
+        if (cursor) {
+          const cursorRect = cursor.getBoundingClientRect();
+          const lines = cm5.querySelectorAll('.CodeMirror-line');
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lineRect = line.getBoundingClientRect();
+            if (cursorRect.top >= lineRect.top - 2 && cursorRect.top <= lineRect.bottom + 2) {
+              const text = (line.textContent || '').replace(/\\u00a0/g, ' ');
+              const match = text.match(/^[ \\t]*/);
+              return match ? match[0] : '';
+            }
+          }
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    // 4. Ace Editor (.ace_editor)
+    const aceEditor = el.closest ? el.closest('.ace_editor') : null;
+    if (aceEditor) {
+      try {
+        const activeLine = aceEditor.querySelector('.ace_line.ace_active-line, .ace_active-line');
+        if (activeLine) {
+          const text = (activeLine.textContent || '').replace(/\\u00a0/g, ' ');
           const match = text.match(/^[ \\t]*/);
           return match ? match[0] : '';
         }
       } catch (e) {}
+      return '';
     }
 
+    // 5. Standard Input or Textarea (only if not inside a specialized code editor above)
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      const pos = el.selectionStart ?? el.value.length;
+      const textBefore = el.value.slice(0, pos);
+      const lastLine = textBefore.split('\\n').pop() || '';
+      const match = lastLine.match(/^[ \\t]*/);
+      return match ? match[0] : '';
+    }
+
+    // 6. ContentEditable
     if (el.isContentEditable) {
       try {
         const sel = window.getSelection();
@@ -1075,37 +1107,6 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     return '';
-  }
-
-  function isNextCharInEditor(el, char) {
-    if (!el) return false;
-    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-      const pos = el.selectionStart;
-      if (pos !== null && pos !== undefined && pos < el.value.length) {
-        return el.value[pos] === char;
-      }
-      return false;
-    }
-    return false;
-  }
-
-  function stepOverChar(el) {
-    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-      const start = el.selectionStart ?? 0;
-      el.selectionStart = el.selectionEnd = start + 1;
-      return;
-    }
-
-    el.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39,
-      bubbles: true, cancelable: true, composed: true,
-      ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
-    }));
-    el.dispatchEvent(new KeyboardEvent('keyup', {
-      key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39,
-      bubbles: true, cancelable: true, composed: true,
-      ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
-    }));
   }
 
   // High-fidelity character typist with safe event dispatches and manual mistake override
@@ -1262,17 +1263,6 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const char = processedText[i];
         const isEnter = char === '\\n';
         const isSpace = char === ' ';
-        const isClosingChar = char === ')' || char === '}' || char === ']' || char === '"' || char === "'";
-
-        // SMART AUTO-CLOSING BRACKET/QUOTE HANDLING
-        // If the editor already auto-closed this character right after cursor, step over it instead of duplicating
-        if (isClosingChar && isNextCharInEditor(target, char)) {
-          stepOverChar(target);
-          playKeySound(false, false);
-          updateHudProgress(i + 1, processedText.length, isPaused);
-          await wait(calculateCharacterDelay(char));
-          continue;
-        }
 
         // Check for mistake (manual button/hotkey, or automatic only if chosen)
         const isAutoMistake = currentSettings.mistakeMode === 'automatic' &&
@@ -1411,8 +1401,10 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         // SMART CODE INDENTATION RECONCILIATION
         // When Enter is typed, web code editors auto-indent. Reconcile editor's indent with snippet to prevent cascading blowout.
+        // We only skip typing redundant whitespace already inserted by the editor.
+        // NEVER send Backspaces on Enter: doing so erases newlines and destroys previous lines.
         if (isEnter) {
-          await wait(12);
+          await wait(20);
           if (cancelled) break;
 
           const editorIndent = getActiveLineLeadingIndent(target);
@@ -1423,33 +1415,26 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
             lookahead++;
           }
 
-          if (editorIndent.length > 0) {
+          if (editorIndent.length > 0 && snippetIndent.length > 0) {
             if (snippetIndent.startsWith(editorIndent)) {
               // Skip duplicate typing of whitespace already inserted by editor
               i += editorIndent.length;
-            } else if (editorIndent.length > snippetIndent.length) {
-              // Backspace excess spaces if editor indented deeper than snippet
-              const excess = editorIndent.length - snippetIndent.length;
-              for (let b = 0; b < excess; b++) {
-                if (emitKeyEvents) {
-                  target.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
-                    bubbles: true, cancelable: true, composed: true,
-                    ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
-                  }));
+            } else {
+              // Normalize tabs vs spaces (1 tab = 4 spaces)
+              const normEditor = editorIndent.replace(/\\t/g, '    ');
+              const normSnippet = snippetIndent.replace(/\\t/g, '    ');
+              if (normSnippet.startsWith(normEditor)) {
+                let consumed = 0;
+                let acc = '';
+                while (i + 1 + consumed < processedText.length && acc.length < normEditor.length) {
+                  const ch = processedText[i + 1 + consumed];
+                  acc += ch === '\\t' ? '    ' : ch;
+                  consumed++;
                 }
-                let deleted = false;
-                try { deleted = document.execCommand('delete', false); } catch (e) { deleted = false; }
-                if (!deleted) deleteCharBeforeCaret(target);
-                if (emitKeyEvents) {
-                  target.dispatchEvent(new KeyboardEvent('keyup', {
-                    key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8,
-                    bubbles: true, cancelable: true, composed: true,
-                    ctrlKey: false, altKey: false, metaKey: false, shiftKey: false
-                  }));
+                if (acc === normEditor) {
+                  i += consumed;
                 }
               }
-              i += snippetIndent.length;
             }
           }
         }
