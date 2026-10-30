@@ -1,0 +1,127 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Snippet, AutoTyperSettings } from '../types/extension.ts';
+
+export const DEFAULT_SNIPPETS: Snippet[] = [
+  {
+    id: 'snip-1',
+    title: 'Professional Email Sign-off',
+    category: 'email',
+    shortcutTrigger: ':sig',
+    keyboardShortcut: 'Alt+1',
+    content: `Best regards,\nAlex Vance\nSenior Solutions Engineer | AI Studio Systems\nalex.vance@example.com | +1 (555) 019-2834`,
+    tags: ['work', 'email', 'signature'],
+    description: 'Clean business email signature with contact details',
+    createdAt: Date.now() - 86400000 * 5,
+    useCount: 42,
+  },
+  {
+    id: 'snip-2',
+    title: 'Client Meeting Confirmation',
+    category: 'email',
+    shortcutTrigger: ':meeting',
+    keyboardShortcut: 'Alt+2',
+    content: `Hi {{name}},\n\nThanks for reaching out! I would love to connect. I am available this {{weekday}} between 2:00 PM and 4:30 PM EST.\n\nPlease let me know if that time slot works for you, and I will generate the calendar invite.\n\nWarm regards,\nAlex`,
+    tags: ['email', 'scheduling', 'template'],
+    description: 'Fast response for calendar booking',
+    createdAt: Date.now() - 86400000 * 4,
+    useCount: 29,
+  },
+  {
+    id: 'snip-3',
+    title: 'TypeScript Async Try/Catch Boilerplate',
+    category: 'code',
+    shortcutTrigger: ':try',
+    keyboardShortcut: 'Alt+3',
+    content: `try {\n  const response = await fetch('/api/v1/resource', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(payload)\n  });\n  if (!response.ok) throw new Error(\`Request failed: \${response.statusText}\`);\n  const data = await response.json();\n  return data;\n} catch (error) {\n  console.error('[Service Error]', error);\n  throw error;\n}`,
+    tags: ['typescript', 'javascript', 'api'],
+    description: 'Robust async fetch block with status check',
+    createdAt: Date.now() - 86400000 * 3,
+    useCount: 68,
+  },
+  {
+    id: 'snip-4',
+    title: 'SQL Upsert Query Template',
+    category: 'code',
+    shortcutTrigger: ':sql',
+    keyboardShortcut: 'Alt+4',
+    content: `INSERT INTO customer_profiles (id, full_name, email, plan_tier, updated_at)\nVALUES ('usr_9812', 'Morgan Reed', 'm.reed@example.com', 'pro', NOW())\nON CONFLICT (email) DO UPDATE SET\n  full_name = EXCLUDED.full_name,\n  plan_tier = EXCLUDED.plan_tier,\n  updated_at = NOW()\nRETURNING *;`,
+    tags: ['sql', 'database', 'postgres'],
+    description: 'PostgreSQL upsert with conflict handling',
+    createdAt: Date.now() - 86400000 * 2,
+    useCount: 19,
+  },
+  {
+    id: 'snip-5',
+    title: 'Anti-Paste Exam / Portal Bypass Text',
+    category: 'testing',
+    shortcutTrigger: ':bypass',
+    keyboardShortcut: 'Alt+5',
+    content: `Verified Authentication Token: SEC-8892-XYZ-4491-PROD-AUTH\nChecksum Hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nTimestamp: {{timestamp}}\nStatus: Verified and Compliant with Institutional Standards.`,
+    tags: ['anti-paste', 'bypass', 'security'],
+    description: 'Simulates natural keystrokes into paste-disabled inputs',
+    createdAt: Date.now() - 86400000,
+    useCount: 84,
+  },
+  {
+    id: 'snip-6',
+    title: 'Customer Support Escalation Note',
+    category: 'chat',
+    shortcutTrigger: ':esc',
+    content: `Hello Tier 2 Team,\n\nEscalating ticket #{{ticket_id}} for user {{email}}.\n- Issue: OAuth token refresh failure after password rotation\n- Steps taken: Cache invalidated, session revoked\n- Urgency: High (Enterprise SLA)\n\nPlease investigate backend auth worker logs.`,
+    tags: ['support', 'escalation', 'chat'],
+    description: 'Standard support escalation ticket notes',
+    createdAt: Date.now() - 86400000 * 6,
+    useCount: 31,
+  },
+  {
+    id: 'snip-7',
+    title: 'Standard Form Filler (Address & Billing)',
+    category: 'forms',
+    shortcutTrigger: ':addr',
+    content: `742 Evergreen Terrace\nSuite 400\nSpringfield, OR 97477\nUnited States`,
+    tags: ['address', 'billing', 'forms'],
+    description: 'Formatted multi-line address block',
+    createdAt: Date.now() - 86400000 * 7,
+    useCount: 53,
+  },
+  {
+    id: 'snip-8',
+    title: 'Git Conventional Commit Message',
+    category: 'code',
+    shortcutTrigger: ':feat',
+    content: `feat(extension): support human jitter simulation and cross-browser MV3\n\n- Add customizable keystroke variance and typo recovery\n- Implement cross-browser polyfill for Firefox and Chromium\n- Intercept paste events in paste-locked form fields`,
+    tags: ['git', 'commit', 'developer'],
+    description: 'Semantic commit format template',
+    createdAt: Date.now() - 86400000 * 8,
+    useCount: 45,
+  }
+];
+
+export const DEFAULT_SETTINGS: AutoTyperSettings = {
+  speedMode: 'human',
+  targetWpm: 75,
+  baseDelayMs: 45,
+  jitterPercent: 35,
+  punctuationPauseMs: 140,
+  mistakeMode: 'manual', // Manual override via button/shortcut (Alt+M) by default
+  typoSimulation: false, // Disabled uncontrollable random mistakes by default
+  typoRatePercent: 2,
+  autoTypeOnPaste: false,
+  antiPasteBypass: true,
+  soundFeedback: 'cherry-blue',
+  soundVolume: 0.35,
+  quickTriggerKey: 'Tab',
+  floatingHudEnabled: true,
+  stopOnEscape: true,
+  shortcuts: {
+    autoTypeClipboard: 'Alt+Shift+V',
+    openSnippetPicker: 'Alt+K',
+    openSnippetManager: 'Alt+Shift+O',
+    stopTyping: 'Escape',
+    triggerMistake: 'Alt+M',
+  },
+};

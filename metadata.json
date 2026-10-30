@@ -1,0 +1,6 @@
+{
+  "name": "AutoTyper Pro - Cross-Browser Snippet Typist",
+  "description": "Cross-browser extension and interactive simulator that human-types pasted and selected snippets with customizable speed, natural jitter, typo correction, and anti-paste bypass.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
