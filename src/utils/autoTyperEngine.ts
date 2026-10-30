@@ -213,11 +213,15 @@ export function getActiveLineLeadingIndent(el: HTMLElement | null): string {
           const dom = ed.getDomNode?.();
           if (dom && (dom === monacoContainer || dom.contains(monacoContainer) || monacoContainer.contains(dom))) {
             const pos = ed.getPosition?.();
-            if (pos) {
+            if (pos && pos.column > 1) {
               const line = ed.getModel?.()?.getLineContent?.(pos.lineNumber) || '';
               const leading = line.slice(0, pos.column - 1);
               const match = leading.match(/^[ \t]*/);
-              return match ? match[0] : '';
+              if (match && match[0].length > 0) {
+                return match[0];
+              }
+              // If line is empty (virtualized whitespace on new empty line), pos.column indicates the exact indentation!
+              return ' '.repeat(pos.column - 1);
             }
           }
         }
@@ -233,8 +237,46 @@ export function getActiveLineLeadingIndent(el: HTMLElement | null): string {
           const vlRect = vl.getBoundingClientRect();
           if (cursorRect.top >= vlRect.top - 2 && cursorRect.top <= vlRect.bottom + 2) {
             const text = (vl.textContent || '').replace(/\u00a0/g, ' ');
-            const match = text.match(/^[ \t]*/);
-            return match ? match[0] : '';
+            const match = text.match(/^[ \t]+/);
+            if (match && match[0].length > 0) {
+              return match[0];
+            }
+            break;
+          }
+        }
+
+        // On an empty newly-created line, Monaco virtualizes indentation: the DOM line has no text characters,
+        // but the cursor is placed at the indented column offset (cursor.style.left).
+        let cursorLeft = 0;
+        if (cursor.style.left) {
+          cursorLeft = parseFloat(cursor.style.left) || 0;
+        } else if (cursor.style.transform) {
+          const match = cursor.style.transform.match(/translate(?:3d)?\(\s*([0-9.]+)px/);
+          if (match) cursorLeft = parseFloat(match[1]) || 0;
+        }
+
+        if (!cursorLeft) {
+          const vlContainer = monacoContainer.querySelector('.view-lines') as HTMLElement | null;
+          if (vlContainer) {
+            cursorLeft = Math.max(0, cursorRect.left - vlContainer.getBoundingClientRect().left);
+          }
+        }
+
+        if (cursorLeft > 2) {
+          let charWidth = 0;
+          const sampleSpan = monacoContainer.querySelector('.view-line span') as HTMLElement | null;
+          if (sampleSpan && sampleSpan.textContent && sampleSpan.textContent.length > 0) {
+            const spanRect = sampleSpan.getBoundingClientRect();
+            if (spanRect.width > 0) {
+              charWidth = spanRect.width / sampleSpan.textContent.length;
+            }
+          }
+          if (!charWidth || charWidth < 4 || charWidth > 25) {
+            charWidth = 8.4; // Standard monospace char width for 14px font
+          }
+          const spaces = Math.round(cursorLeft / charWidth);
+          if (spaces > 0) {
+            return ' '.repeat(spaces);
           }
         }
       }
@@ -793,7 +835,7 @@ export class AutoTyperSession {
       // We only skip typing redundant whitespace already inserted by the editor.
       // NEVER send Backspaces on Enter: doing so erases newlines and destroys previous lines.
       if (isEnter && targetElement) {
-        await this.wait(20);
+        await this.wait(30);
         if (this.isCancelled) {
           this.cleanupListeners();
           return;
@@ -827,6 +869,9 @@ export class AutoTyperSession {
               if (acc === normEditor) {
                 i += consumed;
               }
+            } else if (normEditor.startsWith(normSnippet)) {
+              // Editor indented equal to or deeper than snippet: skip snippet's indentation
+              i += snippetIndent.length;
             }
           }
         }

@@ -55,21 +55,18 @@ This document records every issue found in the audit and the fix applied. Items 
   - Added **On-Page Speed Shortcuts**: Bound `Alt+[` to decrease speed by 10 WPM and `Alt+]` to increase speed by 10 WPM live on any active web page without needing to touch the mouse.
   - Added **Interactive Pause & Break Mode**: Prominent Pause / Play button with clear visual states (`⏸ Pause` vs pulsing emerald `▶ Resume`), display of paused break status, and `Alt+P` keyboard shortcut to freeze and resume at any moment. Excludes pause break duration from WPM metrics.
 
-### P0-7. Destructive backspacing and active line detection errors in Code Editors
+### P0-7. Destructive backspacing and virtualized active line indentation blowout in Code Editors
 
 - **Files:** `src/utils/autoTyperEngine.ts`, `src/utils/extensionGenerator.ts` (`contentJs`)
-- **Visual Reference:** `screenshots/normal.png`, `screenshots/errorBegins.png`, `screenshots/lotsOfErrors.png`, `screenshots/actualsnippet.txt`
+- **Visual Reference:** `screenshots/normal.png`, `screenshots/errorBegins.png`, `screenshots/lotsOfErrors.png`, `screenshots/tabIssuesAreBack.png`, `screenshots/actualsnippet.txt`
 - **Problem:**
-  - In `errorBegins.png`, typing `struct Rectangle {\n    int w,h;\n};` resulted in `int};` on line 8 because whenever a snippet line had less indentation than the editor's auto-indentation (e.g. at closing braces `};` or unindented lines), the engine calculated an `excess` and sent `KeyboardEvent('keydown', Backspace)` + `document.execCommand('delete')`.
-  - Sending Backspaces across lines deleted the newline character, backspaced into the previous line, and erased code backwards (deleting `\n`, `;`, `h`, `,`, `w`, `' '` back to `int`), then typed `};` right after `int` on line 8 (`errorBegins.png`).
-  - In subsequent lines (`lotsOfErrors.png`), repeated backspaces erased previous lines (`{`, `int w,h;\n};`, `cin >> rects[i].w >> ...`), merging lines together into a malformed mess.
-  - In `getActiveLineLeadingIndent`, `el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement` ran before Monaco/CodeMirror checks. In Monaco, `el` is `<textarea class="inputarea">`, so it read Monaco's internal IME buffer instead of the actual editor line.
-  - `isNextCharInEditor` and `stepOverChar` also queried Monaco's internal textarea instead of the editor model, causing characters from the snippet to be dropped and leaving duplicate closing braces.
+  - In `errorBegins.png` and `lotsOfErrors.png`, typing `struct Rectangle {\n    int w,h;\n};` resulted in `int};` and deleted/merged code because the engine attempted to send `excess` Backspaces on Enter, which deleted `\n` and erased previous code.
+  - In `tabIssuesAreBack.png`, consecutive lines indented further and further to the right in a cascading triangular blowout. When Monaco creates an empty line after `Enter`, it virtualizes the indentation: `<div class="view-line">` contains no text characters (`textContent === ''`), even though the cursor is positioned at an indented column. Slicing the empty line string or querying `vl.textContent` returned `''`, so `getActiveLineLeadingIndent` returned 0 spaces. AutoTyper concluded the editor had 0 indentation and typed all leading whitespace from the snippet on top of the editor's auto-indent, causing every line to cascade further right.
 - **Fix:**
   - Removed all destructive Backspace logic on Enter: AutoTyper NEVER sends Backspaces to "unindent" after a newline. Code editors naturally de-indent closing braces (like `}`) via electric indentation without eating previous lines.
   - Prioritized Monaco Editor (`.monaco-editor`), CodeMirror 6 (`.cm-editor`), CodeMirror 5 (`.CodeMirror`), and Ace Editor (`.ace_editor`) detection before generic HTML textarea checks.
-  - Used bounding client rectangle geometry matching (`cursorRect.top` within `vlRect` vertical bounds) to accurately identify the active line in Monaco and CodeMirror.
-  - Removed `isNextCharInEditor` / `stepOverChar` character skipping, allowing modern code editors' native `autoClosingOvertype` to handle closing delimiters faithfully.
+  - Implemented cursor offset column detection for Monaco Editor: on virtualized empty lines, the engine inspects the cursor's horizontal position (`cursor.style.left` / transform / bounding rect relative to `.view-lines`) divided by the editor's character width, or queries `pos.column` directly. This accurately yields the exact number of virtual spaces already provided by the editor.
+  - Updated reconciliation to skip typing duplicate indentation whenever `editorIndent` matches or exceeds the snippet's indent (`normEditor.startsWith(normSnippet)`), completely eliminating cascading blowout.
 
 ---
 
