@@ -22,7 +22,7 @@ export function generateExtensionFiles(
     ? {
         manifest_version: 3,
         name: 'AutoTyper Pro - Auto Type Paste & Snippets',
-        version: '1.2.1',
+        version: '2.0.0',
         description: 'Auto-types pasted text and selected snippets into any field with realistic keystrokes, anti-paste bypass, and custom keyboard shortcuts.',
         browser_specific_settings: {
           gecko: {
@@ -57,7 +57,7 @@ export function generateExtensionFiles(
     : {
         manifest_version: 3,
         name: 'AutoTyper Pro - Auto Type Paste & Snippets',
-        version: '1.2.1',
+        version: '2.0.0',
         description: 'Auto-types pasted text and selected snippets into any field with realistic keystrokes, anti-paste bypass, and custom keyboard shortcuts.',
         permissions: ['storage', 'activeTab', 'scripting', 'contextMenus', 'clipboardRead', 'offscreen'],
         icons: iconMap,
