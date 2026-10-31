@@ -171,12 +171,11 @@ export const SimulatorTab: React.FC<SimulatorTabProps> = ({
     }
   };
 
-  // Shortcut Prefix Expansion (e.g. typing ':sig' followed by Tab or Space)
+  // Shortcut Prefix Expansion (e.g. typing ':sig' followed by Space or Enter)
   const handleTargetKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    const triggerKey = settings.quickTriggerKey || 'Tab';
+    const triggerKey = settings.quickTriggerKey || 'Space';
     const isTrigger =
       e.key === triggerKey ||
-      (triggerKey === 'Tab' && e.key === 'Tab') ||
       (triggerKey === 'Space' && e.key === ' ');
 
     if (isTrigger) {

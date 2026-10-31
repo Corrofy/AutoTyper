@@ -114,7 +114,8 @@ export const DEFAULT_SETTINGS: AutoTyperSettings = {
   antiPasteBypass: true,
   soundFeedback: 'cherry-blue',
   soundVolume: 0.35,
-  quickTriggerKey: 'Tab',
+  quickTriggerKey: 'Space',
+  spacesPerTab: 4,
   floatingHudEnabled: true,
   stopOnEscape: true,
   shortcuts: {

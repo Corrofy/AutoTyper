@@ -581,10 +581,34 @@ export const ConfigTab: React.FC<ConfigTabProps> = ({
               onChange={(e) => update('quickTriggerKey', e.target.value)}
               className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
             >
-              <option value="Tab">Tab Key (Default)</option>
               <option value="Space">Spacebar</option>
               <option value="Enter">Enter Key</option>
             </select>
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-semibold text-slate-300 block">
+                Spaces Per Tab
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Number of spaces emitted for each tab character (<code className="text-indigo-400">\t</code>) in snippet content.
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min="2"
+                max="8"
+                step="1"
+                value={settings.spacesPerTab}
+                onChange={(e) => update('spacesPerTab', parseInt(e.target.value, 10))}
+                className="w-32 accent-indigo-500 cursor-pointer"
+              />
+              <span className="text-xs font-mono text-indigo-400 font-bold tabular-nums min-w-[40px] text-center">
+                {settings.spacesPerTab}
+              </span>
+            </div>
           </div>
         </div>
       </div>

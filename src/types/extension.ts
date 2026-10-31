@@ -44,7 +44,8 @@ export interface AutoTyperSettings {
   antiPasteBypass: boolean; // Emit trusted-like KeyboardEvents and InputEvents to bypass anti-paste scripts
   soundFeedback: KeyboardSoundType;
   soundVolume: number; // 0.0 to 1.0
-  quickTriggerKey: string; // Key to expand shortcut prefix (e.g. "Tab" or "Space")
+  quickTriggerKey: string; // Key to expand shortcut prefix (e.g. "Space")
+  spacesPerTab: number; // Number of spaces to emit for each tab character (default 4)
   floatingHudEnabled: boolean; // Show floating pill indicator when typing in page
   stopOnEscape: boolean; // Hit Escape to cancel ongoing typing
   shortcuts: CustomShortcutsConfig;

@@ -53,6 +53,17 @@ export function interpolateSnippetVariables(text: string): string {
     .replace(/\{\{ticket_id\}\}/gi, Math.floor(100000 + Math.random() * 900000).toString());
 }
 
+/**
+ * Converts tab characters in snippet text to spaces according to the configured
+ * spaces-per-tab ratio. This keeps indentation consistent across editors that
+ * auto-expand tabs and prevents cascading indentation blowout on Enter.
+ */
+export function convertTabsToSpaces(text: string, spacesPerTab: number = 4): string {
+  if (!text || spacesPerTab <= 0) return text;
+  const spaces = ' '.repeat(spacesPerTab);
+  return text.replace(/\t/g, spaces);
+}
+
 export function calculateCharacterDelay(settings: AutoTyperSettings, char: string): number {
   let baseDelay: number;
 
@@ -659,7 +670,7 @@ export class AutoTyperSession {
 
   public async start(): Promise<void> {
     const { text, targetElement, settings, snippetTitle } = this.options;
-    const processedText = interpolateSnippetVariables(text);
+    const processedText = convertTabsToSpaces(interpolateSnippetVariables(text), settings.spacesPerTab);
     const totalLength = processedText.length;
     const emitKeyEvents = settings.antiPasteBypass !== false;
     this.startTime = Date.now();
@@ -855,15 +866,16 @@ export class AutoTyperSession {
             // Editor already auto-inserted this indentation: skip typing those duplicate whitespace chars
             i += editorIndent.length;
           } else {
-            // Normalize tabs vs spaces (1 tab = 4 spaces)
-            const normEditor = editorIndent.replace(/\t/g, '    ');
-            const normSnippet = snippetIndent.replace(/\t/g, '    ');
+            // Normalize tabs vs spaces using the configured spaces-per-tab ratio
+            const tabSpaces = ' '.repeat(settings.spacesPerTab);
+            const normEditor = editorIndent.replace(/\t/g, tabSpaces);
+            const normSnippet = snippetIndent.replace(/\t/g, tabSpaces);
             if (normSnippet.startsWith(normEditor)) {
               let consumed = 0;
               let acc = '';
               while (i + 1 + consumed < totalLength && acc.length < normEditor.length) {
                 const ch = processedText[i + 1 + consumed];
-                acc += ch === '\t' ? '    ' : ch;
+                acc += ch === '\t' ? tabSpaces : ch;
                 consumed++;
               }
               if (acc === normEditor) {

@@ -493,6 +493,14 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .replace(/\\{\\{ticket_id\\}\\}/gi, Math.floor(100000 + Math.random() * 900000).toString());
   }
 
+  // Converts tab characters in snippet text to spaces according to the configured
+  // spaces-per-tab ratio. Kept in sync with the web engine's convertTabsToSpaces.
+  function convertTabsToSpaces(text, spacesPerTab) {
+    if (!text || spacesPerTab <= 0) return text;
+    const spaces = ' '.repeat(spacesPerTab);
+    return text.replace(/\\t/g, spaces);
+  }
+
   // Per-character delay honoring speedMode/baseDelayMs, jitter and punctuation.
   function calculateCharacterDelay(char) {
     let delay;
@@ -1160,7 +1168,7 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
         activeTyperSession.cancel();
       }
 
-      const processedText = interpolateTags(String(text || ''));
+      const processedText = convertTabsToSpaces(interpolateTags(String(text || '')), currentSettings.spacesPerTab || 4);
       if (!processedText) return;
 
       // Make sure events and execCommand target the intended field.
@@ -1458,15 +1466,16 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
               // Skip duplicate typing of whitespace already inserted by editor
               i += editorIndent.length;
             } else {
-              // Normalize tabs vs spaces (1 tab = 4 spaces)
-              const normEditor = editorIndent.replace(/\\t/g, '    ');
-              const normSnippet = snippetIndent.replace(/\\t/g, '    ');
+              // Normalize tabs vs spaces using the configured spaces-per-tab ratio
+              const tabSpaces = ' '.repeat(currentSettings.spacesPerTab || 4);
+              const normEditor = editorIndent.replace(/\\t/g, tabSpaces);
+              const normSnippet = snippetIndent.replace(/\\t/g, tabSpaces);
               if (normSnippet.startsWith(normEditor)) {
                 let consumed = 0;
                 let acc = '';
                 while (i + 1 + consumed < processedText.length && acc.length < normEditor.length) {
                   const ch = processedText[i + 1 + consumed];
-                  acc += ch === '\\t' ? '    ' : ch;
+                  acc += ch === '\\t' ? tabSpaces : ch;
                   consumed++;
                 }
                 if (acc === normEditor) {
@@ -1476,6 +1485,7 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 // Editor indented equal to or deeper than snippet: skip snippet's indentation
                 i += snippetIndent.length;
               }
+            }
             }
           }
         }
@@ -1599,9 +1609,9 @@ browserAPI.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     }
 
-    // 6. Shortcut Prefix Expansion (e.g. typing ':sig' followed by Tab or Space)
-    const triggerKey = currentSettings.quickTriggerKey || 'Tab';
-    if (e.key === triggerKey || (triggerKey === 'Tab' && e.key === 'Tab') || (triggerKey === 'Space' && e.key === ' ')) {
+    // 6. Shortcut Prefix Expansion (e.g. typing ':sig' followed by Space or Enter)
+    const triggerKey = currentSettings.quickTriggerKey || 'Space';
+    if (e.key === triggerKey || (triggerKey === 'Space' && e.key === ' ')) {
       const target = getActiveEditable();
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
         const pos = target.selectionStart;
